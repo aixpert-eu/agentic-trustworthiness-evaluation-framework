@@ -7,22 +7,53 @@ real agent run. It does **not** hold agent implementations.
 
 ## Installation
 
-Requires `uv`. Use Python 3.12 for compatibility with the Torch dependency:
-
-From the repository root:
+Requires `uv` and Python 3.13+. From the repository root:
 
 ```bash
-uv python pin 3.12
 uv sync --extra dev
 uv run --extra dev pytest
 ```
 
-`uv` creates and manages the project environment automatically. 
-For METEOR scoring, run `uv run aixpert-setup-meteor` to download the 
-required WordNet corpus.
+`uv` uses the Python 3.13 pin in `.python-version` and manages `.venv`.
+For METEOR scoring, run `uv run aixpert-setup-meteor` once to download WordNet.
+Optional extras: `math` (SymPy) and `bias` (UnBias-Plus).
 
-Optional extras: `math` (SymPy) and `bias` (unbias-plus); for example,
-`uv sync --extra dev --extra math`.
+For instance, to include bias evaluation and the aixpert-inobo framework, use
+`uv sync --extra dev --extra inobo --extra bias`.
+
+Currently, `inobo` is private and it's installed from GitHub via SSH;
+you need access to `aixpert-eu/aixpert-inobo` to install.
+
+The core framework does not require `inobo`, as it should work with other agents too.
+
+Before running a live agent, configure the LLM provider in the `.env` file.
+If you don't have one:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` to configure the model providers you use; for OpenRouter, set
+`OPENROUTER_API_KEY` to your API key.
+
+Load `.env` explicitly with `--env-file .env`, then generate a trajectory:
+
+```bash
+uv run --env-file .env --extra inobo python fixtures/generate_fixture.py \
+  --provider openrouter --model "openrouter/free" \
+  --query "What is 17 times 25?" \
+  --out fixtures/real_react_trajectory_002.json
+```
+
+and evaluate it:
+
+```bash
+uv run python run_live_evaluation.py \
+  fixtures/real_react_trajectory_002.json --task multiply_17_25
+```
+
+`run_live_evaluation.py` scores a saved trajectory (e.g., one generated via
+`generate_fixtures.py`); it does not launch an agent.
 
 ## Status: confirmed working end-to-end against a real, live agent
 
