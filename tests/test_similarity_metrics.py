@@ -61,14 +61,14 @@ def test_rouge_l_partial_overlap_scores_between_bounds():
 def _wordnet_available() -> bool:
     import nltk
     try:
-        nltk.data.find("corpora/wordnet")
+        nltk.data.find("corpora/wordnet/")
         return True
     except LookupError:
         return False
 
 
-@pytest.mark.skipif(_wordnet_available(), reason="WordNet IS available -- see test_meteor_scores_synonym_pair_when_available instead")
-def test_meteor_raises_clear_error_when_wordnet_missing():
+def test_meteor_raises_clear_error_when_wordnet_missing(monkeypatch):
+    monkeypatch.setattr("metrics.common.meteor._wordnet_available", lambda: False)
     from metrics.common.meteor import METEOREvaluator
     with pytest.raises(RuntimeError, match="WordNet"):
         METEOREvaluator()

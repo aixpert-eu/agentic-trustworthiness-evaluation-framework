@@ -5,6 +5,9 @@ generate_governed_fixture.py
 fixtures/generate_fixture.py
 fixtures/generate_governed_fixture.py
 
+# File with private keys for model providers etc
+.env
+
 # Local scratch trajectories from live testing (real_react_trajectory_001.json
 # is the curated baseline fixture and IS meant to be committed -- only
 # excluding later ad-hoc smoke-test outputs)
@@ -45,3 +48,5 @@ __pycache__/
 *.pyc
 .pytest_cache/
 *.egg-info/
+
+.DS_Store

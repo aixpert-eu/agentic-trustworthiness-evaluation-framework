@@ -27,12 +27,14 @@ import os
 import sys
 import warnings
 
+import nltk
+
 
 def _check_available() -> bool:
     import nltk
     try:
-        nltk.data.find("corpora/wordnet")
-        nltk.data.find("corpora/omw-1.4")
+        nltk.data.find("corpora/wordnet/")
+        nltk.data.find("corpora/omw-1.4/")
         return True
     except LookupError:
         return False
@@ -69,7 +71,8 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.nltk_data_dir:
-        args.nltk_data_dir = os.path.expanduser(args.nltk_data_dir)
+        args.nltk_data_dir = os.path.abspath(os.path.expanduser(args.nltk_data_dir))
+        nltk.data.path.insert(0, args.nltk_data_dir)
 
     if _check_available() and not args.nltk_data_dir:
         print("WordNet corpus already available. Nothing to do.")
@@ -120,10 +123,9 @@ def main() -> int:
         return 0
 
     print(
-        "nltk reported the download succeeded, but the corpus still isn't "
-        "found afterward. In practice this usually also means a network "
-        "restriction (nltk can fail to actually fetch data without raising "
-        "a normal error) -- same remediation as a download error:\n"
+        "The required corpora could not be verified after the download attempt. "
+        "Check NLTK_DATA and the download directory; an incomplete download "
+        "or network restriction may also be responsible:\n"
         "  1. Ask your system administrator about outbound access to nltk's "
         "data server, or\n"
         "  2. Download the 'wordnet' and 'omw-1.4' corpora on a machine "

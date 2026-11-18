@@ -20,7 +20,7 @@ from metrics.common.task_accuracy import _extract_answer_text
 
 def _wordnet_available() -> bool:
     try:
-        nltk.data.find("corpora/wordnet")
+        nltk.data.find("corpora/wordnet/")
         return True
     except LookupError:
         return False
