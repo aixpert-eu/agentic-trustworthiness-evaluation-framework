@@ -65,3 +65,33 @@ def test_main_handles_silent_failure_after_reported_success(capsys):
     assert exit_code == 1
     captured = capsys.readouterr()
     assert "network restriction" in captured.err
+
+
+def test_zip_packaged_corpora_are_available(tmp_path, monkeypatch):
+    import zipfile
+    import nltk
+    from metrics.common.meteor import _wordnet_available
+
+    corpora = tmp_path / "corpora"
+    corpora.mkdir()
+    for name in ("wordnet", "omw-1.4"):
+        with zipfile.ZipFile(corpora / f"{name}.zip", "w") as archive:
+            archive.writestr(f"{name}/README", "test corpus")
+    monkeypatch.setattr(nltk.data, "path", [str(tmp_path)])
+    assert meteor_setup._check_available()
+    assert _wordnet_available()
+
+
+def test_custom_download_directory_is_verified(tmp_path, monkeypatch):
+    import nltk
+
+    monkeypatch.setattr(nltk.data, "path", [])
+    monkeypatch.setattr("sys.argv", ["aixpert-setup-meteor", "--nltk-data-dir", str(tmp_path)])
+
+    def download(download_dir):
+        for name in ("wordnet", "omw-1.4"):
+            (tmp_path / "corpora" / name).mkdir(parents=True)
+        return True, []
+
+    monkeypatch.setattr(meteor_setup, "_attempt_download", download)
+    assert meteor_setup.main() == 0

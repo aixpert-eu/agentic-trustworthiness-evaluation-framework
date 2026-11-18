@@ -5,6 +5,25 @@ dimension definitions, metric/method specifications and
 implementations, KPI templates, and the harness that connects them to a
 real agent run. It does **not** hold agent implementations.
 
+## Installation
+
+Requires `uv`. Use Python 3.12 for compatibility with the Torch dependency:
+
+From the repository root:
+
+```bash
+uv python pin 3.12
+uv sync --extra dev
+uv run --extra dev pytest
+```
+
+`uv` creates and manages the project environment automatically. 
+For METEOR scoring, run `uv run aixpert-setup-meteor` to download the 
+required WordNet corpus.
+
+Optional extras: `math` (SymPy) and `bias` (unbias-plus); for example,
+`uv sync --extra dev --extra math`.
+
 ## Status: confirmed working end-to-end against a real, live agent
 
 This isn't just a metrics library tested in isolation. As of this
