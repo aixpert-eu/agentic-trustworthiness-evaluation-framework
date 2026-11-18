@@ -16,15 +16,15 @@ uv run --extra dev pytest
 
 `uv` uses the Python 3.13 pin in `.python-version` and manages `.venv`.
 For METEOR scoring, run `uv run aixpert-setup-meteor` once to download WordNet.
-Optional extras: `math` (SymPy) and `bias` (UnBias-Plus).
+Optional extras: `math` (SymPy) and `bias` (UnBias-Plus) and `inobo`
+(AIXPERT inobo framework with agentic design patterns).
 
 For instance, to include bias evaluation and the aixpert-inobo framework, use
 `uv sync --extra dev --extra inobo --extra bias`.
 
 Currently, `inobo` is private and it's installed from GitHub via SSH;
-you need access to `aixpert-eu/aixpert-inobo` to install.
-
-The core framework does not require `inobo`, as it should work with other agents too.
+you need access to `aixpert-eu/aixpert-inobo` to install. The core framework
+does not require `inobo`, as it should work with other agents too.
 
 Before running a live agent, configure the LLM provider in the `.env` file.
 If you don't have one:
