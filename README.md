@@ -53,7 +53,7 @@ uv run python run_live_evaluation.py \
 ```
 
 `run_live_evaluation.py` scores a saved trajectory (e.g., one generated via
-`generate_fixtures.py`); it does not launch an agent.
+`generate_fixture.py`); it does not launch an agent.
 
 ## Status: confirmed working end-to-end against a real, live agent
 
