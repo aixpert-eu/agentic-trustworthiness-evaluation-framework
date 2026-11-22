@@ -43,7 +43,8 @@ PRICES=${PRICES:-}             # optional prices.json
 DRY_RUN=${DRY_RUN:-0}
 
 # --- environment: use the lines from your existing job script here ---------------------------------------
-if command -v module >/dev/null 2>&1; then
+SKIP_ENV_SETUP=${SKIP_ENV_SETUP:-0}   # 1: skip the lines below (the environment is already active in this shell)
+if [ "$SKIP_ENV_SETUP" != 1 ] && command -v module >/dev/null 2>&1; then
   module load Miniconda3
   source activate aixpert-unified
 fi

@@ -46,8 +46,8 @@ def run(name, tmp_path, rounds, **env_extra):
     log = tmp_path / "calls.txt"
     log.write_text("")
     env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "SHIM_LOG": str(log), "ROUNDS": rounds, "REPO": str(tmp_path / "repo"),
-           "DIAGFLOW": str(tmp_path / "data"), "MAINTIE": str(tmp_path / "data"), "OPENROUTER_API_KEY": "dummy", "OUT_DIR": str(tmp_path / "out"),
-           **{k: str(v) for k, v in env_extra.items()}}
+           "DIAGFLOW": str(tmp_path / "data"), "MAINTIE": str(tmp_path / "data"), "OPENROUTER_API_KEY": "dummy", "OUT_DIR": str(tmp_path / "out"), "SKIP_ENV_SETUP": "1",
+           **{k: str(v) for k, v in env_extra.items()}}  # SKIP_ENV_SETUP: a cluster's module/conda lines would put the real python before the stand-in
     done = subprocess.run(["bash", str(SCRIPTS[name])], env=env, capture_output=True, text=True)
     modules = [c for c in log.read_text().splitlines() if c.startswith("-m ")]  # the `python -m ...` calls, in order
     return done, [c for c in modules if c.split()[1].endswith(".capture")], [c for c in modules if c.split()[1].endswith(".evaluate")]
@@ -97,3 +97,19 @@ def test_the_key_is_required_for_a_real_run_but_not_for_a_rehearsal(tmp_path, na
     assert done.returncode == 2 and "OPENROUTER_API_KEY is not set" in done.stdout and captures == []
     done, captures, _ = run(name, tmp_path, "10:1" if name == "diagflow" else "15:3", OPENROUTER_API_KEY="", DRY_RUN=1)
     assert done.returncode == 0 and captures and all("--dry-run" in c and "_dryrun" in c for c in captures)
+
+
+@pytest.mark.parametrize("name", SCRIPTS)
+def test_the_environment_lines_run_where_there_is_a_module_system_unless_skipped(tmp_path, name):
+    """On the cluster the default must still load the module and activate the environment; SKIP_ENV_SETUP=1 turns that off."""
+    seen = tmp_path / "module_calls.txt"
+    (tmp_path / "bin").mkdir(exist_ok=True)
+    (tmp_path / "bin" / "activate").write_text(f'echo "activate $*" >> {seen}\n')  # `source activate <env>` finds this on PATH
+    fake_module = {"BASH_FUNC_module%%": f'() {{ echo "module $*" >> {seen}; }}'}   # an exported bash function, as on a cluster
+    rounds = "10:1" if name == "diagflow" else "15:3"
+    seen.write_text("")
+    run(name, tmp_path, rounds, SKIP_ENV_SETUP=0, **fake_module)
+    assert seen.read_text().splitlines()[:2] == ["module load Miniconda3", "activate aixpert-unified"]
+    seen.write_text("")
+    run(name, tmp_path, rounds, SKIP_ENV_SETUP=1, **fake_module)
+    assert seen.read_text() == ""

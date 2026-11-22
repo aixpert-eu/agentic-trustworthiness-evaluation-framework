@@ -28,7 +28,7 @@ ROUNDS="5:2 5:3"   sbatch harness/slurm/diagflow_extra_runs.sbatch
 ROUNDS="15:3 20:3 25:3 30:3" sbatch harness/slurm/maintie_extra_runs.sbatch
 ```
 
-Other settings are environment variables too (`MODEL`, `MODELS`, `PATTERNS`, `RESERVE`, `TIMEOUT`, `RUNS_DIR`, `OUT_DIR`, `EVALUATE`, `JUDGE`, `PRICES`, `TEMPERATURE`; see the top of each script). Set `REPO`, `DIAGFLOW` or `MAINTIE` if your paths differ from `/scratch/$USER/...`. Two things to check once: the environment lines near the top (copy the ones from your existing job script) and that `OPENROUTER_API_KEY` is exported the way your existing job does it.
+Other settings are environment variables too (`MODEL`, `MODELS`, `PATTERNS`, `RESERVE`, `TIMEOUT`, `RUNS_DIR`, `OUT_DIR`, `EVALUATE`, `JUDGE`, `PRICES`, `TEMPERATURE`, `SKIP_ENV_SETUP`; see the top of each script). Set `REPO`, `DIAGFLOW` or `MAINTIE` if your paths differ from `/scratch/$USER/...`. Two things to check once: the environment lines near the top (copy the ones from your existing job script, or set `SKIP_ENV_SETUP=1` if the environment is already active in your shell) and that `OPENROUTER_API_KEY` is exported the way your existing job does it.
 
 Rehearse without any API call and without touching your real runs: `DRY_RUN=1 bash harness/slurm/diagflow_extra_runs.sbatch`. It uses the built-in fake agent and a separate `*_dryrun` directory.
 
