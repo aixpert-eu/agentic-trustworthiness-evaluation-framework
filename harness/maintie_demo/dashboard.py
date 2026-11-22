@@ -6,32 +6,16 @@ import argparse
 import json
 from pathlib import Path
 
+from harness.dashboard_theme import apply_theme
+
 TEMPLATE = r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>AIXPERT WP3 live demo</title>
 <style>
-:root{--bg:#fafaf8;--panel:#fff;--ink:#1c1c1a;--mute:#6b6b66;--line:#e4e3dd;--react:#2d6cdf;--rag:#d9822b;--good:#2f855a;--mid:#b7791f;--bad:#c53030}
-@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#141413;--panel:#1d1d1b;--ink:#ecebe6;--mute:#9a9a93;--line:#2e2e2b;--react:#6ea0ff;--rag:#f0a255;--good:#5fc08a;--mid:#e0b04f;--bad:#f07a7a}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,sans-serif}
-main{max-width:1100px;margin:0 auto;padding:24px 16px 64px}
-h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:32px 0 4px}p.sub{margin:0 0 12px;color:var(--mute);font-size:13px}
-.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow-x:auto}
-table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:middle}
-th{color:var(--mute);font-weight:600}td.n{font-variant-numeric:tabular-nums;white-space:nowrap}
-.chip{display:inline-block;padding:1px 8px;border-radius:99px;font-size:12px;border:1px solid var(--line)}
-.b4,.b3{color:var(--good);border-color:var(--good)}.b2{color:var(--mid);border-color:var(--mid)}.b1,.b0{color:var(--bad);border-color:var(--bad)}
-.row{display:grid;grid-template-columns:minmax(150px,230px) 1fr 52px;gap:8px;align-items:center;margin:3px 0;font-size:13px}
-.track{background:var(--line);height:10px;border-radius:5px;overflow:hidden}.fill{height:100%;border-radius:5px}
-.lbl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px}
-.grp{margin:14px 0 4px;font-weight:600;font-size:13px}.legend{font-size:12px;color:var(--mute);margin-bottom:6px}
-select{font:inherit;padding:4px 6px;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:6px}
-.ok{color:var(--good)}.no{color:var(--bad)}.mono{font-family:ui-monospace,monospace;font-size:12px}
-details{border-bottom:1px solid var(--line);padding:6px 0}summary{cursor:pointer}
-.notes{font-size:12px;color:var(--mute);margin-top:8px}
+__THEME_CSS__
 </style></head><body><main>
-<h1>AIXPERT WP3 evaluation framework: live demo</h1>
-<p class="sub" id="sub"></p>
+__HEADER__
 
 <h2>Task quality</h2><p class="sub">How well each agent annotated the work orders, scored against MaintIE gold labels.</p>
 <div class="panel" id="quality"></div>
@@ -47,6 +31,7 @@ details{border-bottom:1px solid var(--line);padding:6px 0}summary{cursor:pointer
 <p class="sub">Pick a configuration to see, per work order, the gold annotation and what the agent returned in each run.</p>
 <div class="panel"><select id="cfg"></select><div id="items"></div></div>
 <p class="notes" id="notes"></p>
+__FOOTER__
 </main>
 <script id="data" type="application/json">__DATA__</script>
 <script>
@@ -94,7 +79,9 @@ $('notes').innerHTML = R.meta.notes.map(esc).join('<br>');
 
 def build_html(results: dict) -> str:
     payload = json.dumps(results).replace("</", "<\\/")
-    return TEMPLATE.replace("__DATA__", payload)
+    themed = apply_theme(TEMPLATE, line1="AIXPERT WP3 evaluation framework", line2="Live demo (MaintIE)",
+                         footer="AIXPERT WP3 evaluation framework: live demo")
+    return themed.replace("__DATA__", payload)
 
 
 def main(argv: list[str] | None = None) -> None:
