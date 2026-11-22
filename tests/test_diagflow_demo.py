@@ -305,3 +305,25 @@ def test_load_runs_ignores_foreign_json(tmp_path):
     (tmp_path / "m" / "react" / "WO1__r0.json").write_text(json.dumps({"item_id": "WO1", "run": 0}))
     (tmp_path / "m" / "react" / "C1__r0.json").write_text(json.dumps({"conversation_id": "C1", "per_turn": []}))
     assert [r["conversation_id"] for r in load_runs(tmp_path)] == ["C1"]
+
+
+def test_judge_retries_rate_limits(tmp_path, monkeypatch):
+    import io, json, urllib.error
+    from harness.diagflow_demo import judge as J
+    sleeps, calls = [], {"n": 0}
+
+    class Resp(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def fake_urlopen(req, timeout=0):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise urllib.error.HTTPError("u", 429, "Too Many Requests", {"Retry-After": "7"} if calls["n"] == 1 else {}, None)
+        return Resp(json.dumps({"choices": [{"message": {"content": "YES"}}]}).encode())
+
+    monkeypatch.setattr(J.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(J.time, "sleep", sleeps.append)
+    h = J.HaikuJudge(tmp_path / "c.json", api_key="k")
+    assert h._call("p", 5) == "YES" and calls["n"] == 3
+    assert sleeps == [7.0, 4.0]  # Retry-After first, then exponential backoff

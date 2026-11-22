@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, Protocol
@@ -84,13 +85,14 @@ class CacheJudge:
 class HaikuJudge(CacheJudge):
     """Cache first, then the live judge. New labels are written to ``cache_path`` as they are made."""
 
-    def __init__(self, cache_path: str | Path, api_key: str | None = None, call=None, retries: int = 3):
+    def __init__(self, cache_path: str | Path, api_key: str | None = None, call=None, retries: int = 6):
         self.path = Path(cache_path)
         super().__init__(json.loads(self.path.read_text(encoding="utf-8")) if self.path.exists() else {})
         self.api_key = api_key or os.environ.get("JUDGE_API_KEY") or os.environ.get("OPENROUTER_API_KEY", "")
         self._call = call or self._openrouter
         self.retries = retries
         self.calls = 0
+        self._wait: float | None = None
 
     def _openrouter(self, prompt: str, max_tokens: int) -> str:
         if not self.api_key:
@@ -102,10 +104,17 @@ class HaikuJudge(CacheJudge):
         last: Exception | None = None
         for attempt in range(self.retries + 1):
             if attempt:
-                time.sleep(2.0 * 2 ** (attempt - 1))
+                time.sleep(min(60.0, 2.0 * 2 ** (attempt - 1)) if self._wait is None else self._wait)
+            self._wait = None
             try:
                 with urllib.request.urlopen(req, timeout=60) as r:
                     return json.loads(r.read().decode())["choices"][0]["message"]["content"].strip()
+            except urllib.error.HTTPError as e:  # honour the provider's Retry-After on rate limits
+                last = e
+                try:
+                    self._wait = min(120.0, float(e.headers.get("Retry-After", "")))
+                except (TypeError, ValueError, AttributeError):
+                    self._wait = None
             except Exception as e:  # network or provider error: retry, then give up
                 last = e
         raise RuntimeError(f"judge call failed after {self.retries + 1} attempts: {last}")
