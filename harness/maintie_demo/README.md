@@ -40,6 +40,8 @@ python -m harness.maintie_demo.dashboard --metrics uc3_selection.json
 
 The selection file is JSON written by the catalogue picker (`{"label": ..., "metrics": [ids]}`); a plain list of ids or a text file of ids also works.
 
+**How far can a number move.** Bars carry a whisker and every band chip a tooltip with the 95% interval: a percentile bootstrap that resamples the work order (never the run, because repeated runs of one work order are not independent), 1000 draws, fixed seed. With 10 work orders read it as an indication, not an exact coverage. pass^k and pass@k are computed with the same k for every configuration (default: the fewest runs any work order has, at most 5; `--k` to choose, an error if it exceeds the runs captured). pass@k is never below pass^k; for a deterministic agent they are equal. Log completeness is not scored for a run that made no tool calls (nothing to log is not a pass). Discriminative power (does the score separate the configurations at all) describes the comparison, not one configuration, so it has its own panel.
+
 Repeat capture for each model to compare (free and paid). `prices.json` maps a model to `[usd_per_1k_input, usd_per_1k_output]`; models missing from it cost 0. Add `--dry-run` to capture to exercise the whole pipeline with a fake agent and no API calls. Rate-limited or failed calls are retried, then recorded as errored runs (counted as failures); `--retry-errors` re-runs them.
 
 ### Long unattended runs
@@ -58,7 +60,7 @@ python -m harness.maintie_demo.evaluate --maintie $M --n 10 --max-runs 3 --commo
 # --patterns basic_rag       exact pattern names
 ```
 
-`--common` keeps only the (work order, run) pairs that every configuration has. Without a filter, evaluate warns when configurations differ in work orders or runs, and the dashboard notes carry the warning or the subset used.
+`--common` keeps only the (work order, run) pairs that every configuration has. `--min-runs M` keeps only the work orders that have runs 0 to M-1 in every configuration, which is what you want after an extension that has only reached some work orders (otherwise the work order with the fewest runs sets k for everyone). `--k N` and `--bootstrap N` set the k of pass^k / pass@k and the number of bootstrap draws. For adding work orders and runs on the cluster in resumable rounds, with a request budget, see `harness/slurm/README.md`. Without a filter, evaluate warns when configurations differ in work orders or runs, and the dashboard notes carry the warning or the subset used.
 
 ## The WP4 side (local file)
 
