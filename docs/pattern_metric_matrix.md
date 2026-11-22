@@ -101,12 +101,28 @@ cover: agentic self-correction dynamics, governance-mechanism
 verification, and Human-centricity, grounded in T3.1's own DoA text requiring
 human-centric explainability evaluation.
 
+## Additions beyond the periodic table: diagnostic-dialogue metrics
+
+Seven metrics for assistants that follow a documented procedure graph and must recognise inputs the procedure does not cover (UC3-style shopfloor decision support). Scoring follows DiagFlowBench (Gil de Avalle et al., EMNLP 2026 Industry Track; code MIT, data CC-BY-4.0). They are additions, so the "35 of 61 periodic table tools" count above is unchanged. Dimension assignment is provisional and bands reuse the existing fixed H and L cuts.
+
+| Metric | Norm | What it measures | Needs |
+|---|---|---|---|
+| `step_accuracy` | H | reply names exactly the expected next node (Jaccard node matching, threshold 0.05) | turns with reply, expected node, graph |
+| `branch_following` | H | reply takes the branch the operator's answer selects at a decision node | turns with reply, decision node, expected edge label, graph |
+| `termination_recognition` | H | reply proposes no further step at a terminal node | turns with reply, graph |
+| `correct_abstention_rate` | H | off-procedure input recognised and not mapped to a step | outcome labels per off-procedure turn (caller-supplied, e.g. LLM judge) |
+| `forced_mapping_rate` | L | off-procedure input answered with a real step it does not license | same labels |
+| `fabrication_rate` | L | off-procedure input answered with a step that is not in the procedure | same labels |
+| `over_abstention_rate` | L | valid on-procedure input wrongly declined or deflected | one flag per valid turn |
+
+Recovery after a failed off-procedure turn is scored with the existing `error_recovery_rate`, and whether the assistant abstains only when it should can be scored with `escalation_appropriateness` on (turn is off-procedure, assistant abstained) pairs.
+
 ## The integration layer -- `contracts/registry.py` and `harness/`
 
-`contracts/registry.py` is a machine-readable catalogue of all 46
+`contracts/registry.py` is a machine-readable catalogue of all 53
 metrics: applicability, dimensions, which method to call, and what
 extra data (if any) it needs beyond the trajectory itself. Exists
-because 46 metrics with genuinely different call signatures
+because 53 metrics with genuinely different call signatures
 (`evaluate`, `evaluate_with_target`, `evaluate_with_oracle`,
 `evaluate_labeled_set`, `evaluate_trials`, ...) isn't discoverable by
 reading source files one at a time -- this is docs/pattern_metric_matrix.md,

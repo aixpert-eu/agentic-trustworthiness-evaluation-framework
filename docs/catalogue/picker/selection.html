@@ -1,0 +1,36 @@
+   <p class="hint">
+    Select a metric to explore its description, required evidence and implementation details. Use <b>Add to my selection</b> on a card to build the metric set a use case needs.
+   </p>
+   <!-- MY SELECTION: dimension coverage, export and import of the chosen metric ids -->
+   <section aria-label="My metric selection" class="selection" id="selection">
+    <h2>
+     My selection
+    </h2>
+    <p>
+     Pick the metrics a use case needs, check which trustworthiness dimensions they cover, then download the list. A demo dashboard can load that file under <b>Metrics shown</b> to display only these metrics and to flag the ones a run did not measure.
+    </p>
+    <div class="sel-actions">
+     <label>
+      Selection name (optional)
+      <input id="sel-label" placeholder="e.g. UC3 diagnostic dialogue" type="text"/>
+     </label>
+     <button class="filter" id="sel-download" type="button">
+      Download selection (JSON)
+     </button>
+     <button class="filter" id="sel-copy" type="button">
+      Copy metric ids
+     </button>
+     <button class="filter" id="sel-load-btn" type="button">
+      Load selection…
+     </button>
+     <input accept=".json,.txt,application/json,text/plain" aria-label="Load a metric selection file" hidden="" id="sel-load" type="file"/>
+     <button class="filter" id="sel-clear" type="button">
+      Clear
+     </button>
+    </div>
+    <p aria-live="polite" class="sel-status" id="sel-status">
+    </p>
+    <textarea aria-label="Selected metric ids" hidden="" id="sel-ids" readonly="" rows="6" style="width:100%;margin-bottom:12px"></textarea>
+    <div class="dimgrid" id="dimcards">
+    </div>
+   </section>

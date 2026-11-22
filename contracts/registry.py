@@ -40,6 +40,18 @@ from metrics.trajectory.tool_call_accuracy import ToolCallAccuracyEvaluator
 
 from metrics.governance.prompt_injection_resistance import PromptInjectionResistanceEvaluator
 
+from metrics.diagnostic_dialogue.off_procedure import (
+    CorrectAbstentionRateEvaluator,
+    FabricationRateEvaluator,
+    ForcedMappingRateEvaluator,
+    OverAbstentionRateEvaluator,
+)
+from metrics.diagnostic_dialogue.on_procedure import (
+    BranchFollowingEvaluator,
+    StepAccuracyEvaluator,
+    TerminationRecognitionEvaluator,
+)
+
 
 from metrics.efficiency.cost_per_query import CostPerQueryEvaluator
 from metrics.efficiency.energy_carbon import EnergyCarbonEvaluator
@@ -134,6 +146,16 @@ REGISTRY: list[MetricSpec] = [
     MetricSpec("escalation_appropriateness", EscalationAppropriatenessEvaluator, "aggregate", ("Autonomy",), "evaluate_labeled_set", single_trajectory=False),
     MetricSpec("error_recovery_rate", ErrorRecoveryRateEvaluator, "aggregate", ("Robustness",), "evaluate_labeled_set", single_trajectory=False),
     MetricSpec("unsafe_action_rate", UnsafeActionRateEvaluator, "aggregate", ("Safety, Security & Privacy",), "evaluate_steps", single_trajectory=False, notes="VETO metric -- see module docstring."),
+
+    # Diagnostic-dialogue metrics (procedure-grounded assistants, e.g. UC3). Additions beyond the
+    # periodic table; scoring follows DiagFlowBench. Dimension assignment is provisional.
+    MetricSpec("step_accuracy", StepAccuracyEvaluator, "aggregate", ("Accuracy",), "evaluate_turns", single_trajectory=False, notes="Turns: response, expected_node_id, graph. Jaccard node matching (threshold 0.05, DiagFlowBench)."),
+    MetricSpec("branch_following", BranchFollowingEvaluator, "aggregate", ("Accuracy",), "evaluate_turns", single_trajectory=False, notes="Turns: response, decision_node_id, expected_label, graph."),
+    MetricSpec("termination_recognition", TerminationRecognitionEvaluator, "aggregate", ("Accuracy",), "evaluate_turns", single_trajectory=False, notes="Turns: response, graph. Correct = reply names no node at a terminal."),
+    MetricSpec("correct_abstention_rate", CorrectAbstentionRateEvaluator, "aggregate", ("Autonomy",), "evaluate_labeled_set", single_trajectory=False, notes="Higher is better (H). Input: outcome labels for off-procedure turns; labels come from the caller (e.g. an LLM judge)."),
+    MetricSpec("forced_mapping_rate", ForcedMappingRateEvaluator, "aggregate", ("Autonomy",), "evaluate_labeled_set", single_trajectory=False, notes="Lower is better (L). Same labelled set as correct_abstention_rate."),
+    MetricSpec("fabrication_rate", FabricationRateEvaluator, "aggregate", ("Accuracy",), "evaluate_labeled_set", single_trajectory=False, notes="Lower is better (L). Same labelled set as correct_abstention_rate."),
+    MetricSpec("over_abstention_rate", OverAbstentionRateEvaluator, "aggregate", ("Autonomy",), "evaluate_labeled_set", single_trajectory=False, notes="Lower is better (L). Input: one bool per valid on-procedure turn (True = wrongly abstained)."),
 
     MetricSpec("judge_human_agreement", JudgeHumanAgreementEvaluator, "meta_evaluation", ("Transparency & Explainability",), "evaluate_agreement", single_trajectory=False),
     MetricSpec("metric_validity", MetricValidityEvaluator, "meta_evaluation", ("Auditability / Verifiability",), "evaluate_validity", single_trajectory=False),

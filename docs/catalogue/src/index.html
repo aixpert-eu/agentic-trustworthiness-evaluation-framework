@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+ <head>
+  <!-- EDITING GUIDE: visible page text is in this file; colours/layout in styles.css; metrics and tooltips in catalogue-data.js; behaviour in catalogue.js. Keep this folder together. -->
+  <meta charset="utf-8"/>
+  <meta content="width=device-width,initial-scale=1" name="viewport"/>
+  <meta content="Explore the AIXPERT agentic trustworthiness evaluation framework: dimensions and evaluation metrics." name="description"/>
+  <title>
+   Agentic Trustworthiness Evaluation Framework
+  </title>
+  <link href="styles.css" rel="stylesheet"/>
+ </head>
+ <body>
+  <main class="wrap">
+   <!-- HEADER: logo, page title and computed metric count -->
+   <header class="top">
+    <div class="brand">
+     <img alt="AIXPERT logo" class="logo" src="assets/logo.png"/>
+     <div>
+      AI
+      <span>
+       XPERT
+      </span>
+      <b>
+       •
+      </b>
+      <div class="eyebrow">
+       Trustworthiness evaluation
+      </div>
+     </div>
+    </div>
+    <div class="heading">
+     <h1>
+      Agentic Trustworthiness
+      <br/>
+      Evaluation Framework
+     </h1>
+     <div class="meta" id="stats">
+     </div>
+    </div>
+   </header>
+   <!-- INTRODUCTION: edit this paragraph freely -->
+   <p class="intro">
+    From trustworthiness principles to measurable evidence. Explore the dimensions and evaluation methods that connect an agent’s behaviour to a transparent assessment.
+   </p>
+   <p class="inventory-note">
+    47 implemented metrics · 46 registered · Bias / language requires direct invocation.
+   </p>
+   <!-- FILTER CONTROLS: edit labels; keep IDs and option values for JavaScript -->
+   <section aria-label="Catalogue filters" class="controls">
+    <div class="eyebrow">
+     Applicability categories
+    </div>
+    <div class="legend" id="categories">
+    </div>
+    <p aria-live="polite" class="category-explanation" id="category-explanation">
+    </p>
+    <div class="toolbar">
+     <label>
+      Search metrics
+      <input id="search" placeholder="Name, description or requirement…" type="search"/>
+     </label>
+     <label>
+      Trustworthiness dimension
+      <select id="dimension">
+       <option value="">
+        All dimensions
+       </option>
+      </select>
+     </label>
+     <label>
+      Agent scope
+      <select id="agent">
+       <option value="">
+        All scopes
+       </option>
+       <option>
+        Single-agent input/output
+       </option>
+       <option>
+        Single-agent behaviour
+       </option>
+       <option>
+        Multi-agent-specific
+       </option>
+       <option>
+        System measurements
+       </option>
+       <option>
+        Human experience
+       </option>
+       <option>
+        Evaluation process
+       </option>
+      </select>
+     </label>
+     <label>
+      Evidence needed
+      <select id="evidence">
+       <option value="">
+        All evidence types
+       </option>
+      </select>
+     </label>
+     <label>
+      Harness support
+      <select id="scope">
+       <option value="">
+        All implemented metrics
+       </option>
+       <option value="single">
+        One captured trajectory
+       </option>
+       <option value="other">
+        Separate data / orchestration
+       </option>
+      </select>
+     </label>
+     <button class="filter" id="reset">
+      Reset filters
+     </button>
+     <output aria-live="polite" id="count">
+     </output>
+    </div>
+   </section>
+   <!-- EXPLANATORY TEXT: agent scope and evidence -->
+   <aside class="scope-note">
+    <strong>
+     Evidence is not the same as human input.
+    </strong>
+    Extra evidence may be repeated runs, tool traces, token probabilities, resource measurements or ratings. Participant responses are required for usability and cognitive load; judge–human agreement requires human reference ratings. Labeled datasets may be prepared in advance.
+    <br/>
+    <strong>
+     Multiple runs ≠ multiple agents.
+    </strong>
+    Input/output metrics assess a single agent’s responses; behaviour metrics assess its actions or repeated attempts. System measurements and evaluation-process metrics are cross-cutting. Generic scores may be applied to a multi-agent system’s final output when compatible data is supplied, but they do not measure coordination. Multi-agent-specific evaluators are not included in the committed framework. Local-only benchmark additions are excluded from this catalogue.
+   </aside>
+   <!-- METRIC GRID: cards are generated from catalogue-data.js -->
+   <section aria-label="Metric catalogue" class="board">
+    <div class="grid" id="grid">
+    </div>
+    <p class="empty" hidden="" id="empty">
+     No metrics match these filters. Try another dimension or reset the filters.
+    </p>
+   </section>
+   <p class="hint">
+    Select a metric to explore its description, required evidence and implementation details.
+   </p>
+   <!-- FRAMEWORK EXPLANATION AND DIMENSIONS -->
+   <section class="notes">
+    <div>
+     <h2>
+      From an agent run to an assessment
+     </h2>
+     <p>
+      The harness starts with a captured trajectory. An adapter converts the agent output into
+      <code>
+       EvaluationInput
+      </code>
+      ; an optional
+      <code>
+       TaskDefinition
+      </code>
+      supplies target answers, expected tool calls or task-specific checks. The registry selects applicable single-trajectory evaluators.
+     </p>
+     <p>
+      Missing labels cause metrics to be skipped. Individual evaluator failures are captured without stopping the rest of the report. Batch, reflective, survey and measurement-based metrics need separate evidence and orchestration.
+     </p>
+     <h2>
+      Reading the results
+     </h2>
+     <p>
+      Results include a score, explanation, success indicator and metadata. Where supported, metric-specific banding maps results to 0–4: Unacceptable, Below expectations, Adequate, Good and Excellent. Some metrics use binary checks; a single universal score threshold would be misleading.
+     </p>
+    </div>
+    <div>
+     <h2>
+      The ten dimensions
+     </h2>
+     <div id="dimensions">
+     </div>
+     <p>
+      This catalogue describes registered implementations, not measured system performance. A dimension can exist in the taxonomy without a dedicated registered metric.
+     </p>
+    </div>
+   </section>
+   <!-- FOOTER: edit or remove the text below -->
+   <footer>
+    AIXPERT · Evaluation framework catalogue
+   </footer>
+  </main>
+  <!-- METRIC DETAILS: filled when a metric card is selected -->
+  <dialog aria-labelledby="metric-title" id="detail">
+   <button aria-label="Close metric details" class="close" id="close">
+    ×
+   </button>
+   <header class="dialog-head">
+    <div class="eyebrow" id="metric-number">
+    </div>
+    <h2 id="metric-title">
+    </h2>
+    <div id="tags">
+    </div>
+   </header>
+   <div class="dialog-body">
+    <p class="lead" id="description">
+    </p>
+    <dl class="facts" id="facts">
+    </dl>
+    <h3>
+     Method description
+    </h3>
+    <div class="documentation" id="documentation">
+    </div>
+    <details>
+     <summary>
+      Implementation reference
+     </summary>
+     <p class="source" id="source">
+     </p>
+     <div class="documentation" id="technical">
+     </div>
+    </details>
+   </div>
+   <nav aria-label="Metric navigation" class="dialog-nav">
+    <button class="filter" id="previous">
+     ← Previous
+    </button>
+    <span class="meta" id="position">
+    </span>
+    <button class="filter" id="next">
+     Next →
+    </button>
+   </nav>
+  </dialog>
+  <script defer="" src="catalogue-data.js">
+  </script>
+  <script defer="" src="catalogue.js">
+  </script>
+ </body>
+</html>
