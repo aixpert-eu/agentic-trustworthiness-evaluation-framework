@@ -40,7 +40,9 @@ CATEGORIES = ("coverage_gap", "undocumented_malfunction", "unrelated_question")
 
 
 def load_runs(runs_dir: str | Path) -> list[dict]:
-    return [json.loads(p.read_text(encoding="utf-8")) for p in sorted(Path(runs_dir).rglob("*__r*.json"))]
+    """Every DiagFlowBench run file under ``runs_dir``; other JSON that happens to match (e.g. MaintIE runs) is ignored."""
+    recs = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(Path(runs_dir).rglob("*__r*.json"))]
+    return [r for r in recs if isinstance(r, dict) and "conversation_id" in r and "per_turn" in r]
 
 
 def filter_records(records: list[dict], *, conv_ids: set[str] | None = None, max_runs: int | None = None,

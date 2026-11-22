@@ -296,3 +296,12 @@ def test_parity_with_the_published_results():
     rows, ok = run(Path(os.environ["DIAGFLOWBENCH_PATH"]), only=["Llama 3.3", "Gemini"])
     assert rows and ok
     assert all(r["match"] for r in rows if r["metric"] != "termination_recognition")
+
+
+def test_load_runs_ignores_foreign_json(tmp_path):
+    import json
+    from harness.diagflow_demo.evaluate import load_runs
+    (tmp_path / "m" / "react").mkdir(parents=True)
+    (tmp_path / "m" / "react" / "WO1__r0.json").write_text(json.dumps({"item_id": "WO1", "run": 0}))
+    (tmp_path / "m" / "react" / "C1__r0.json").write_text(json.dumps({"conversation_id": "C1", "per_turn": []}))
+    assert [r["conversation_id"] for r in load_runs(tmp_path)] == ["C1"]
