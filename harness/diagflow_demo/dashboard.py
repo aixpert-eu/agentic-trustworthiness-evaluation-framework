@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 from harness.dashboard_theme import apply_theme
+from harness.dashboard_trust import apply_trust, load_selection, page_data
 
 TEMPLATE = r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -14,9 +15,12 @@ TEMPLATE = r"""<!doctype html>
 <title>AIXPERT WP3 DiagFlowBench demo</title>
 <style>
 __THEME_CSS__
+__TRUST_CSS__
 </style></head><body><main>
 __HEADER__
+__TRUST_SECTION__
 
+<div class="part">Part 2 &middot; Task-specific metrics (DiagFlowBench)</div>
 <h2>Off-procedure behaviour</h2>
 <p class="sub">When the operator reports something the procedure does not cover. Right: correct abstention (the assistant recognises the gap). Left: forced mapping (a real step the input does not license) and fabrication (a step that is not in the procedure).</p>
 <div class="panel" id="off"></div>
@@ -25,11 +29,8 @@ __HEADER__
 <p class="sub">When the operator reports something the procedure covers. Clean conversations.</p>
 <div class="panel" id="on"></div>
 
-<h2>Trustworthiness metrics (WP3 framework)</h2>
-<p class="sub">Band chips follow the framework banding (4 Excellent to 0 Unacceptable). Reliability metrics need several runs per conversation to differ from a single run.</p>
-<div class="panel"><table id="trust"></table></div>
-
-<h2>Efficiency</h2><p class="sub">Per conversation turn, averaged over all runs. Cost uses the price table given at evaluation time (free models cost 0).</p>
+<div class="part">Part 3 &middot; Details</div>
+<h2>Resource use</h2><p class="sub">Per conversation turn, averaged over all runs. Cost uses the price table given at evaluation time (free models cost 0). The banded latency and cost also appear under the Efficiency dimension in Part 1.</p>
 <div class="panel"><table id="eff"></table></div>
 
 <h2>Conversation drill-down</h2>
@@ -67,9 +68,23 @@ $('on').innerHTML = bars.map(([id, title]) => `<div class="grp">${title}</div>` 
   return `<div class="row"><div class="lbl" title="${esc(key(c))}"><span class="dot" style="background:${color(c)}"></span>${esc(key(c))}</div><div class="track"><div class="fill" style="width:${100 * v}%;background:${color(c)}"></div></div><div class="n">${pct(v)}</div></div>`;
 }).join('')).join('');
 
-$('trust').innerHTML = '<tr><th>Configuration</th><th>Turn-level reliability (pass^k)</th><th>Repeatability (cross-run)</th><th>Recovery after a failed off-procedure turn</th><th>Over-abstention (valid input declined)</th><th>Abstains only when it should (F1)</th></tr>' +
-  live.map(c => { const e = m(c, 'escalation_appropriateness');
-    return `<tr><td><span class="dot" style="background:${color(c)}"></span>${esc(key(c))}</td><td>${chip(c.pass_hat_k)}</td><td>${chip(c.cross_run_consistency)}</td><td>${chip(m(c, 'error_recovery_rate'))}</td><td>${chip(m(c, 'over_abstention_rate'))}</td><td>${e ? `<span class="chip b${e.band_level}">${esc(e.band_label)}</span> <span class="n">${f2(e.f1)}</span>` : 'n/a'}</td></tr>`; }).join('');
+__TRUST_JS__
+const NEEDS_RUNS = '<span class="mute">needs 2+ runs</span>', bandOnly = r => r && !r.error ? r : null;
+trustInit({rows: live, rowHtml: c => `<span class="dot" style="background:${color(c)}"></span>${esc(key(c))}`, metrics: [
+  {id: 'pass_hat_k_agent', dim: 'Accuracy', label: 'Turn-level reliability (pass^k)', val: c => c.pass_hat_k, res: c => c.pass_hat_k, html: c => chip(c.pass_hat_k)},
+  {id: 'cross_run_consistency', dim: 'Robustness', label: 'Repeatability (cross-run)', val: c => c.cross_run_consistency, res: c => c.cross_run_consistency,
+    html: c => c.cross_run_consistency ? chip(c.cross_run_consistency) : NEEDS_RUNS, missing: 'needs 2 or more runs per conversation'},
+  {id: 'error_recovery_rate', dim: 'Robustness', label: 'Recovery after a failed off-procedure turn', val: c => m(c, 'error_recovery_rate'), res: c => m(c, 'error_recovery_rate'), html: c => chip(m(c, 'error_recovery_rate')),
+    missing: 'needs judged off-procedure turns'},
+  {id: 'over_abstention_rate', dim: 'Autonomy', label: 'Over-abstention (valid input declined)', val: c => m(c, 'over_abstention_rate'), res: c => m(c, 'over_abstention_rate'), html: c => chip(m(c, 'over_abstention_rate')),
+    missing: 'needs judged turns'},
+  {id: 'escalation_appropriateness', dim: 'Autonomy', label: 'Abstains only when it should (F1)', val: c => m(c, 'escalation_appropriateness'), res: c => m(c, 'escalation_appropriateness'),
+    html: c => { const e = m(c, 'escalation_appropriateness'); return e ? `<span class="chip b${e.band_level}">${esc(e.band_label)}</span> <span class="n">${f2(e.f1)}</span>` : 'n/a'; }, missing: 'needs judged turns'},
+  {id: 'latency', dim: 'Efficiency', label: 'Latency per turn', val: c => c.latency_mean_s, res: c => bandOnly(c.latency),
+    html: c => c.latency_mean_s == null ? 'n/a' : c.latency_mean_s.toFixed(1) + ' s ' + (bandOnly(c.latency) ? chip({...c.latency, rate: null}) : '')},
+  {id: 'cost_per_query', dim: 'Efficiency', label: 'Cost per turn', val: c => c.cost_mean_usd, res: c => bandOnly(c.cost),
+    html: c => c.cost_mean_usd == null ? 'n/a' : '$' + c.cost_mean_usd.toFixed(4) + ' ' + (bandOnly(c.cost) ? chip({...c.cost, rate: null}) : '')}
+]});
 
 $('eff').innerHTML = '<tr><th>Configuration</th><th>Latency per turn</th><th>Cost per turn</th><th>Tokens in / out per turn</th><th>Tool calls per turn</th><th>Errored runs</th></tr>' +
   live.map(c => `<tr><td><span class="dot" style="background:${color(c)}"></span>${esc(key(c))}</td><td>${c.latency_mean_s == null ? 'n/a' : c.latency_mean_s.toFixed(1) + ' s'} ${c.latency && !c.latency.error ? chip({...c.latency, rate: null}) : ''}</td><td>$${(c.cost_mean_usd ?? 0).toFixed(4)}</td><td class="n">${Math.round(c.tokens_in_mean ?? 0)} / ${Math.round(c.tokens_out_mean ?? 0)}</td><td class="n">${f2(c.tool_calls_mean)}</td><td class="n">${c.n_errors} of ${c.n_runs}</td></tr>`).join('');
@@ -91,18 +106,21 @@ $('notes').innerHTML = R.meta.notes.map(esc).join('<br>');
 """
 
 
-def build_html(results: dict) -> str:
-    themed = apply_theme(TEMPLATE, line1="AIXPERT WP3 evaluation framework", line2="DiagFlowBench demo",
-                         footer="AIXPERT WP3 evaluation framework: DiagFlowBench demo")
-    return themed.replace("__DATA__", json.dumps(results).replace("</", "<\\/"))
+def build_html(results: dict, selection: dict | None = None) -> str:
+    """``selection`` is an optional metric selection (see harness.dashboard_trust.load_selection) shown on open."""
+    themed = apply_trust(apply_theme(TEMPLATE, line1="AIXPERT WP3 evaluation framework", line2="DiagFlowBench demo",
+                                     footer="AIXPERT WP3 evaluation framework: DiagFlowBench demo"))
+    return themed.replace("__DATA__", json.dumps(page_data(results, selection)).replace("</", "<\\/"))
 
 
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--results", default="results_diagflow.json")
     ap.add_argument("--out", default="dashboard_diagflow.html")
+    ap.add_argument("--metrics", help="metric selection file exported by the catalogue picker; the page opens showing only these")
     args = ap.parse_args(argv)
-    Path(args.out).write_text(build_html(json.loads(Path(args.results).read_text(encoding="utf-8"))), encoding="utf-8")
+    results = json.loads(Path(args.results).read_text(encoding="utf-8"))
+    Path(args.out).write_text(build_html(results, load_selection(args.metrics)), encoding="utf-8")
     print(f"wrote {args.out}")
 
 

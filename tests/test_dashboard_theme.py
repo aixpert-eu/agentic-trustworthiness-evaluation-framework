@@ -8,6 +8,7 @@ import re
 import pytest
 
 from harness import dashboard_theme as theme
+from harness import dashboard_trust as trust
 from harness.diagflow_demo import dashboard as diagflow_dashboard
 from harness.maintie_demo import dashboard as maintie_dashboard
 
@@ -18,7 +19,7 @@ EMPTY = {"meta": {"dataset": "d", "generated_at": "2026-01-01T00:00:00", "notes"
 @pytest.mark.parametrize("name", DASHBOARDS)
 def test_all_placeholders_are_filled(name):
     html = DASHBOARDS[name].build_html(EMPTY)
-    for placeholder in ("__THEME_CSS__", "__HEADER__", "__FOOTER__", "__DATA__"):
+    for placeholder in ("__THEME_CSS__", "__HEADER__", "__FOOTER__", "__DATA__", "__TRUST_CSS__", "__TRUST_SECTION__", "__TRUST_JS__"):
         assert placeholder not in html
     assert html.count('<header class="top">') == 1 and html.count("<footer>") == 1
     assert 'id="sub"' in html and "AIXPERT WP3" in html
@@ -27,7 +28,7 @@ def test_all_placeholders_are_filled(name):
 @pytest.mark.parametrize("name", DASHBOARDS)
 def test_every_colour_token_used_is_defined(name):
     template = DASHBOARDS[name].TEMPLATE
-    used = set(re.findall(r"var\((--[a-z0-9-]+)\)", template + theme.CSS))
+    used = set(re.findall(r"var\((--[a-z0-9-]+)\)", template + theme.CSS + trust.TRUST_CSS + trust.TRUST_SECTION + trust.TRUST_JS))
     defined = set(re.findall(r"(--[a-z0-9-]+)\s*:", theme.CSS))
     assert used <= defined, f"undefined tokens: {sorted(used - defined)}"
 

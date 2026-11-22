@@ -24,6 +24,19 @@ python -m harness.diagflow_demo.evaluate --diagflow $R --reference
 python -m harness.diagflow_demo.dashboard
 ```
 
+
+### Reading the dashboard
+
+The page opens with the general trustworthiness metrics grouped by framework dimension (Part 1), then the task-specific results (Part 2), then details (Part 3). A tile per dimension says how many registered metrics this run measured; a dimension without a measured metric is shown as a gap. Metrics the demo computes but that have no value in the run (for example repeatability with one run per item) are listed under the table with what they need.
+
+Under "Metrics shown" you can untick metrics, switch on a weakest-metric band per dimension (only metrics that carry a framework band count), or load a selection file made with the catalogue picker. Metrics in the selection that the run did not measure are listed, not hidden. To open the page with a selection already applied:
+
+```bash
+python -m harness.diagflow_demo.dashboard --metrics uc3_selection.json
+```
+
+The selection file is JSON written by the catalogue picker (`{"label": ..., "metrics": [ids]}`); a plain list of ids or a text file of ids also works.
+
 `--pattern baseline` is the benchmark's own setup (whole graph as JSON in the system prompt, no WP4), so patterns can be compared with it and with the published models. `--dry-run` exercises everything with a fake agent. Capture options (resume, `--retry-errors`, `--timeout`, `--min-free-requests`, authentication abort) work as in the MaintIE demo.
 
 **Request budget.** A conversation has about 13 (clean) to 15 (mixed) operator turns, so one run costs roughly 14 requests for `baseline`, 28 for Basic RAG and 60 or more for ReAct. `--pairs 5` is 10 conversations. `--max-turns` (default 14) skips the longest conversations.

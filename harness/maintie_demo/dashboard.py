@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 from harness.dashboard_theme import apply_theme
+from harness.dashboard_trust import apply_trust, load_selection, page_data
 
 TEMPLATE = r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -14,17 +15,17 @@ TEMPLATE = r"""<!doctype html>
 <title>AIXPERT WP3 live demo</title>
 <style>
 __THEME_CSS__
+__TRUST_CSS__
 </style></head><body><main>
 __HEADER__
+__TRUST_SECTION__
 
+<div class="part">Part 2 &middot; Task-specific metrics (MaintIE annotation)</div>
 <h2>Task quality</h2><p class="sub">How well each agent annotated the work orders, scored against MaintIE gold labels.</p>
 <div class="panel" id="quality"></div>
 
-<h2>Trustworthiness metrics (WP3 framework)</h2>
-<p class="sub">Computed by the existing WP3 metrics. Band chips follow the framework banding (4 Excellent to 0 Unacceptable).</p>
-<div class="panel"><table id="trust"></table></div>
-
-<h2>Efficiency</h2><p class="sub">Per query, averaged over all runs. Cost uses the price table given at evaluation time (free models cost 0).</p>
+<div class="part">Part 3 &middot; Details</div>
+<h2>Resource use</h2><p class="sub">Per query, averaged over all runs. Cost uses the price table given at evaluation time (free models cost 0). The banded latency and cost also appear under the Efficiency dimension in Part 1.</p>
 <div class="panel"><table id="eff"></table></div>
 
 <h2>Work-order drill-down</h2>
@@ -53,8 +54,21 @@ $('quality').innerHTML = '<div class="legend"><span class="dot" style="backgroun
     return `<div class="row"><div class="lbl" title="${esc(key(c))}">${esc(key(c))}</div><div class="track"><div class="fill" style="width:${100 * v}%;background:${color(c)}"></div></div><div class="n">${pct(v)}</div></div>`;
   }).join('')).join('');
 
-$('trust').innerHTML = '<tr><th>Configuration</th><th>Outcome reliability (pass^k)</th><th>Repeatability (cross-run)</th><th>Schema conformance</th><th>Log completeness</th><th>Step efficiency</th></tr>' +
-  C.map(c => `<tr><td><span class="dot" style="background:${color(c)}"></span>${esc(key(c))}</td><td>${chip(c.pass_hat_k)}</td><td>${chip(c.cross_run_consistency)}</td><td>${chip(c.schema_conformance)}</td><td class="n">${f2(c.log_completeness)}</td><td class="n">${f2(c.step_efficiency)}</td></tr>`).join('');
+__TRUST_JS__
+const bandOnly = r => r && !r.error ? r : null;
+trustInit({rows: C, rowHtml: c => `<span class="dot" style="background:${color(c)}"></span>${esc(key(c))}`, metrics: [
+  {id: 'pass_hat_k_agent', dim: 'Accuracy', label: 'Outcome reliability (pass^k)', val: c => c.pass_hat_k, res: c => c.pass_hat_k, html: c => chip(c.pass_hat_k)},
+  {id: 'schema_violation_rate', dim: 'Accuracy', label: 'Schema conformance', val: c => c.schema_conformance, res: c => c.schema_conformance, html: c => chip(c.schema_conformance)},
+  {id: 'cross_run_consistency', dim: 'Robustness', label: 'Repeatability (cross-run)', val: c => c.cross_run_consistency, res: c => c.cross_run_consistency, html: c => chip(c.cross_run_consistency),
+    missing: 'needs 2 or more runs per item'},
+  {id: 'log_completeness', dim: 'Transparency & Explainability', label: 'Log completeness', val: c => c.log_completeness, res: () => null, html: c => `<span class="n">${f2(c.log_completeness)}</span>`,
+    missing: 'needs a tool-call trace'},
+  {id: 'step_efficiency', dim: 'Efficiency', label: 'Step efficiency', val: c => c.step_efficiency, res: () => null, html: c => `<span class="n">${f2(c.step_efficiency)}</span>`, missing: 'needs a step budget'},
+  {id: 'latency', dim: 'Efficiency', label: 'Latency per query', val: c => c.latency_mean_s, res: c => bandOnly(c.latency),
+    html: c => c.latency_mean_s == null ? 'n/a' : c.latency_mean_s.toFixed(1) + ' s ' + (bandOnly(c.latency) ? chip(c.latency) : '')},
+  {id: 'cost_per_query', dim: 'Efficiency', label: 'Cost per query', val: c => c.cost_mean_usd, res: c => bandOnly(c.cost),
+    html: c => c.cost_mean_usd == null ? 'n/a' : '$' + c.cost_mean_usd.toFixed(4) + ' ' + (bandOnly(c.cost) ? chip(c.cost) : '')}
+]});
 
 $('eff').innerHTML = '<tr><th>Configuration</th><th>Latency (mean)</th><th>Cost per query</th><th>Tokens in / out</th><th>Tool calls</th><th>Errored runs</th></tr>' +
   C.map(c => `<tr><td><span class="dot" style="background:${color(c)}"></span>${esc(key(c))}</td><td>${c.latency_mean_s == null ? 'n/a' : c.latency_mean_s.toFixed(1) + ' s'} ${c.latency && !c.latency.error ? chip(c.latency) : ''}</td><td>$${(c.cost_mean_usd ?? 0).toFixed(4)} ${c.cost && !c.cost.error ? chip(c.cost) : ''}</td><td class="n">${Math.round(c.tokens_in_mean ?? 0)} / ${Math.round(c.tokens_out_mean ?? 0)}</td><td class="n">${f2(c.tool_calls_mean)}</td><td class="n">${c.n_errors} of ${c.n_runs}</td></tr>`).join('');
@@ -63,7 +77,7 @@ C.forEach((c, i) => $('cfg').insertAdjacentHTML('beforeend', `<option value="${i
 const pill = e => `<span class="mono">${esc(e.text)} [${esc(e.type)}]</span>`;
 const rel = r => `<span class="mono">${esc(r.head)} -${esc(r.type)}-> ${esc(r.tail)}</span>`;
 function items() {
-  const c = C[+$('cfg').value];
+  const c = C[+$('cfg').value]; if (!c) { $('items').innerHTML = ''; return; }
   $('items').innerHTML = c.items.map(it => {
     const ok = it.runs.map(r => `<span class="${r.task_success >= 1 ? 'ok' : 'no'}">${r.task_success >= 1 ? '&#10003;' : '&#10007;'}</span>`).join(' ');
     const runs = it.runs.map(r => `<p><b>run ${r.run}</b> ${r.error ? '<span class="no">error: ' + esc(r.error) + '</span>' :
@@ -77,10 +91,11 @@ $('notes').innerHTML = R.meta.notes.map(esc).join('<br>');
 """
 
 
-def build_html(results: dict) -> str:
-    payload = json.dumps(results).replace("</", "<\\/")
-    themed = apply_theme(TEMPLATE, line1="AIXPERT WP3 evaluation framework", line2="Live demo (MaintIE)",
-                         footer="AIXPERT WP3 evaluation framework: live demo")
+def build_html(results: dict, selection: dict | None = None) -> str:
+    """``selection`` is an optional metric selection (see harness.dashboard_trust.load_selection) shown on open."""
+    payload = json.dumps(page_data(results, selection)).replace("</", "<\\/")
+    themed = apply_trust(apply_theme(TEMPLATE, line1="AIXPERT WP3 evaluation framework", line2="Live demo (MaintIE)",
+                                     footer="AIXPERT WP3 evaluation framework: live demo"))
     return themed.replace("__DATA__", payload)
 
 
@@ -88,8 +103,10 @@ def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--results", default="results.json")
     ap.add_argument("--out", default="dashboard.html")
+    ap.add_argument("--metrics", help="metric selection file exported by the catalogue picker; the page opens showing only these")
     args = ap.parse_args(argv)
-    Path(args.out).write_text(build_html(json.loads(Path(args.results).read_text(encoding="utf-8"))), encoding="utf-8")
+    results = json.loads(Path(args.results).read_text(encoding="utf-8"))
+    Path(args.out).write_text(build_html(results, load_selection(args.metrics)), encoding="utf-8")
     print(f"wrote {args.out}")
 
 

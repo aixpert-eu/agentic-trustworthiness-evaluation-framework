@@ -27,6 +27,19 @@ python -m harness.maintie_demo.evaluate --maintie $M --prices prices.json
 python -m harness.maintie_demo.dashboard
 ```
 
+
+### Reading the dashboard
+
+The page opens with the general trustworthiness metrics grouped by framework dimension (Part 1), then the task-specific results (Part 2), then details (Part 3). A tile per dimension says how many registered metrics this run measured; a dimension without a measured metric is shown as a gap. Metrics the demo computes but that have no value in the run (for example repeatability with one run per item) are listed under the table with what they need.
+
+Under "Metrics shown" you can untick metrics, switch on a weakest-metric band per dimension (only metrics that carry a framework band count), or load a selection file made with the catalogue picker. Metrics in the selection that the run did not measure are listed, not hidden. To open the page with a selection already applied:
+
+```bash
+python -m harness.maintie_demo.dashboard --metrics uc3_selection.json
+```
+
+The selection file is JSON written by the catalogue picker (`{"label": ..., "metrics": [ids]}`); a plain list of ids or a text file of ids also works.
+
 Repeat capture for each model to compare (free and paid). `prices.json` maps a model to `[usd_per_1k_input, usd_per_1k_output]`; models missing from it cost 0. Add `--dry-run` to capture to exercise the whole pipeline with a fake agent and no API calls. Rate-limited or failed calls are retried, then recorded as errored runs (counted as failures); `--retry-errors` re-runs them.
 
 ### Long unattended runs
