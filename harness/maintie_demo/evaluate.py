@@ -73,7 +73,7 @@ def evaluate_run(rec: dict, item: Item) -> dict:
     pred = parse_prediction(traj.output)
     out = {
         "run": rec["run"], "error": rec.get("error"), "seconds": rec["wall_seconds"],
-        "quality": quality, "predicted": pred, "structured": pred is not None,
+        "quality": quality, "predicted": pred, "structured": quality["valid"],
         "tokens_in": 0, "tokens_out": 0,
     }
     if rec.get("error") or not rec["messages"]:

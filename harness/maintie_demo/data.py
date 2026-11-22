@@ -30,6 +30,18 @@ RELATION_TYPES = (
 )
 ID_TOKEN = "<id>"
 
+# The silver release uses short relation names; gold uses the full ones.
+# Everything is normalised to the gold names so retrieved examples teach the
+# same labels the scorer accepts.
+RELATION_ALIASES = {
+    "hasPatient": "hasParticipant/hasPatient",
+    "hasAgent": "hasParticipant/hasAgent",
+}
+
+
+def canonical_relation(name: str) -> str:
+    return RELATION_ALIASES.get(name, name)
+
 
 @dataclass(frozen=True)
 class Entity:
@@ -65,7 +77,7 @@ def parse_record(record: dict, item_id: str) -> Item:
     ents = tuple(Entity(" ".join(tokens[e["start"]:e["end"]]), e["type"]) for e in record["entities"])
     rels = []
     for r in record.get("relations", []):
-        rels.append(Relation(ents[r["head"]].text, ents[r["tail"]].text, r["type"]))
+        rels.append(Relation(ents[r["head"]].text, ents[r["tail"]].text, canonical_relation(r["type"])))
     return Item(item_id=item_id, text=clean_text(tokens), entities=ents, relations=tuple(rels))
 
 

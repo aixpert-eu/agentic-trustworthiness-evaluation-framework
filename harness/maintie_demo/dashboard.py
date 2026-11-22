@@ -82,7 +82,7 @@ function items() {
   $('items').innerHTML = c.items.map(it => {
     const ok = it.runs.map(r => `<span class="${r.task_success >= 1 ? 'ok' : 'no'}">${r.task_success >= 1 ? '&#10003;' : '&#10007;'}</span>`).join(' ');
     const runs = it.runs.map(r => `<p><b>run ${r.run}</b> ${r.error ? '<span class="no">error: ' + esc(r.error) + '</span>' :
-      r.predicted ? `entities: ${r.predicted.entities.map(pill).join(', ') || 'none'}<br>relations: ${r.predicted.relations.map(rel).join(', ') || 'none'}` : '<span class="no">output did not match the schema</span>'}</p>`).join('');
+      r.predicted ? `entities: ${r.predicted.entities.map(pill).join(', ') || 'none'}<br>relations: ${r.predicted.relations.map(rel).join(', ') || 'none'}${r.predicted.n_invalid ? `<br><span class="no">${r.predicted.n_invalid} out-of-scheme item(s) dropped</span>` : ''}` : '<span class="no">output did not match the schema</span>'}</p>`).join('');
     return `<details><summary>${ok} &nbsp; ${esc(it.text)}</summary><p><b>gold</b> entities: ${it.gold.entities.map(pill).join(', ')}<br>relations: ${it.gold.relations.map(rel).join(', ') || 'none'}</p>${runs}</details>`;
   }).join('');
 }

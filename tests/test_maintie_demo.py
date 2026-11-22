@@ -52,19 +52,47 @@ def test_parse_record_uses_exclusive_spans_and_drops_id_token(items):
 
 def test_parse_prediction_accepts_dict_json_and_fenced_json():
     d = {"entities": [{"text": "pump", "type": "PhysicalObject"}], "relations": []}
-    assert parse_prediction(d) == d
-    assert parse_prediction(json.dumps(d)) == d
-    assert parse_prediction("Here you go:\n```json\n" + json.dumps(d) + "\n```") == d
-    assert parse_prediction("prefix " + json.dumps(d) + " suffix") == d
+    want = dict(d, n_invalid=0)
+    assert parse_prediction(d) == want
+    assert parse_prediction(json.dumps(d)) == want
+    assert parse_prediction("Here you go:\n```json\n" + json.dumps(d) + "\n```") == want
+    assert parse_prediction("prefix " + json.dumps(d) + " suffix") == want
 
 
-@pytest.mark.parametrize("bad", [
-    None, "no json here", {"entities": "x"}, {"entities": [{"text": "a", "type": "Banana"}], "relations": []},
-    {"entities": [], "relations": [{"head": "a", "tail": "b", "type": "located_at"}]},
-    {"entities": [{"type": "State"}], "relations": []},
-])
-def test_parse_prediction_rejects_schema_violations(bad):
+@pytest.mark.parametrize("bad", [None, "no json here", {"entities": "x"}, {"relations": []}, 42])
+def test_parse_prediction_returns_none_when_no_answer_recoverable(bad):
     assert parse_prediction(bad) is None
+
+
+def test_parse_prediction_is_lenient_about_out_of_scheme_items():
+    out = {"entities": [{"text": "pump", "type": "PhysicalObject"}, {"text": "a", "type": "Banana"}, {"type": "State"}],
+           "relations": [{"head": "a", "tail": "b", "type": "located_at"}, {"head": "pump", "tail": "x", "type": "hasPart"}]}
+    p = parse_prediction(out)
+    assert [e["text"] for e in p["entities"]] == ["pump"]
+    assert [r["type"] for r in p["relations"]] == ["hasPart"]
+    assert p["n_invalid"] == 3
+    s = score_prediction(parse_record(REC_B, "x"), out)
+    assert not s["valid"] and s["entity"]["tp"] == 1 and s["entity"]["n_pred"] == 1  # the valid entity is still scored
+
+
+def test_silver_style_relation_names_are_accepted_as_aliases():
+    out = {"entities": [], "relations": [{"head": "a", "tail": "b", "type": "hasPatient"},
+                                           {"head": "a", "tail": "b", "type": "hasAgent"}]}
+    p = parse_prediction(out)
+    assert [r["type"] for r in p["relations"]] == ["hasParticipant/hasPatient", "hasParticipant/hasAgent"] and p["n_invalid"] == 0
+
+
+def test_parse_record_normalises_silver_relation_names():
+    rec = dict(REC_B, relations=[{"head": 0, "tail": 2, "type": "hasPatient"}])
+    assert parse_record(rec, "s0").relations[0].type == "hasParticipant/hasPatient"
+
+
+def test_json_is_recovered_after_free_text_reasoning_and_draft_json():
+    final = {"entities": [{"text": "pump", "type": "PhysicalObject"}], "relations": []}
+    draft = '{"entities": [{"text": "draft", "type": "State"}], "relations": []} // not final'
+    text = "Reasoning: let me think {with braces}.\n" + draft + "\nso the answer is:\n" + json.dumps(final, indent=2)
+    p = parse_prediction(text)
+    assert [e["text"] for e in p["entities"]] == ["pump"]
 
 
 def test_score_prediction_perfect_partial_wrong_class_and_invalid(items):
@@ -80,6 +108,7 @@ def test_score_prediction_perfect_partial_wrong_class_and_invalid(items):
 
     s = score_prediction(a, "garbage")
     assert not s["valid"] and s["entity"]["recall"] == 0.0 and s["entity"]["n_gold"] == 3
+    assert score_prediction(a, perfect)["valid"] is True
 
 
 def test_matching_is_case_and_whitespace_insensitive(items):
