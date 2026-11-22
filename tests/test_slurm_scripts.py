@@ -45,7 +45,8 @@ def run(name, tmp_path, rounds, **env_extra):
     (tmp_path / "data").mkdir(exist_ok=True)
     log = tmp_path / "calls.txt"
     log.write_text("")
-    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "SHIM_LOG": str(log), "ROUNDS": rounds, "REPO": str(tmp_path / "repo"),
+    inherited = {k: v for k, v in os.environ.items() if not k.startswith("BASH_FUNC_") and k not in ("BASH_ENV", "ENV")}  # a cluster shell exports Lmod's `module`
+    env = {**inherited, "PATH": f"{bindir}:{os.environ['PATH']}", "SHIM_LOG": str(log), "ROUNDS": rounds, "REPO": str(tmp_path / "repo"),
            "DIAGFLOW": str(tmp_path / "data"), "MAINTIE": str(tmp_path / "data"), "OPENROUTER_API_KEY": "dummy", "OUT_DIR": str(tmp_path / "out"), "SKIP_ENV_SETUP": "1",
            **{k: str(v) for k, v in env_extra.items()}}  # SKIP_ENV_SETUP: a cluster's module/conda lines would put the real python before the stand-in
     done = subprocess.run(["bash", str(SCRIPTS[name])], env=env, capture_output=True, text=True)
@@ -101,15 +102,20 @@ def test_the_key_is_required_for_a_real_run_but_not_for_a_rehearsal(tmp_path, na
 
 @pytest.mark.parametrize("name", SCRIPTS)
 def test_the_environment_lines_run_where_there_is_a_module_system_unless_skipped(tmp_path, name):
-    """On the cluster the default must still load the module and activate the environment; SKIP_ENV_SETUP=1 turns that off."""
+    """On the cluster the default must still load the module and activate the environment; SKIP_ENV_SETUP=1 turns that off.
+
+    `module` and `activate` are stand-in executables first on PATH (`command -v module`, `module load X` and
+    `source activate X` find them there), so the test does not depend on how a given bash imports shell functions."""
     seen = tmp_path / "module_calls.txt"
     (tmp_path / "bin").mkdir(exist_ok=True)
-    (tmp_path / "bin" / "activate").write_text(f'echo "activate $*" >> {seen}\n')  # `source activate <env>` finds this on PATH
-    fake_module = {"BASH_FUNC_module%%": f'() {{ echo "module $*" >> {seen}; }}'}   # an exported bash function, as on a cluster
+    for tool in ("module", "activate"):
+        stand_in = tmp_path / "bin" / tool
+        stand_in.write_text(f'#!/bin/bash\necho "{tool} $*" >> {seen}\n')
+        stand_in.chmod(stand_in.stat().st_mode | stat.S_IEXEC)
     rounds = "10:1" if name == "diagflow" else "15:3"
     seen.write_text("")
-    run(name, tmp_path, rounds, SKIP_ENV_SETUP=0, **fake_module)
+    run(name, tmp_path, rounds, SKIP_ENV_SETUP=0)
     assert seen.read_text().splitlines()[:2] == ["module load Miniconda3", "activate aixpert-unified"]
     seen.write_text("")
-    run(name, tmp_path, rounds, SKIP_ENV_SETUP=1, **fake_module)
+    run(name, tmp_path, rounds, SKIP_ENV_SETUP=1)
     assert seen.read_text() == ""
