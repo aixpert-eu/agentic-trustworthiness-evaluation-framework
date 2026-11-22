@@ -49,4 +49,10 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 
+# MaintIE demo: local builder for the real WP4 agents (imports WP4's private package)
+harness/maintie_demo/wp4_agents.py
+# MaintIE demo outputs
+runs/
+results.json
+dashboard.html
 .DS_Store

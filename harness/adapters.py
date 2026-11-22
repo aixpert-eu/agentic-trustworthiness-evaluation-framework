@@ -28,6 +28,23 @@ from __future__ import annotations
 from contracts.evaluator import EvaluationInput
 
 
+def _msg_get(msg, key, default=None):
+    return msg.get(key, default) if isinstance(msg, dict) else getattr(msg, key, default)
+
+
+def _last_ai_text(messages) -> str | None:
+    """Text of the last AI message with non-empty string content, else None."""
+    for msg in reversed(list(messages)):
+        if _msg_get(msg, "type") not in ("ai", "AIMessage"):
+            continue
+        content = _msg_get(msg, "content")
+        if isinstance(content, list):  # content blocks
+            content = "".join(b.get("text", "") if isinstance(b, dict) else str(b) for b in content)
+        if isinstance(content, str) and content.strip():
+            return content
+    return None
+
+
 def from_wp4_pattern_result(result: dict, input_query: str) -> EvaluationInput:
     """
     Converts a WP4 pattern's raw `.invoke()` (or `.run()`) return value
@@ -43,10 +60,11 @@ def from_wp4_pattern_result(result: dict, input_query: str) -> EvaluationInput:
           (see harness module notes -- that needs either a checkpointer
           check or a small WP4 interface addition, still open).
 
-    NOT YET confirmed for BasicRAG -- its `run()` return value's exact
-    keys (does it include `structured_response` at all, or only
-    `messages` + `context`?) haven't been verified against real output.
-    Test this specifically before relying on it for RAG evaluation.
+    CONFIRMED for BasicRAG on WP4 main: its `run()` returns `messages`
+    and `context` only (no `structured_response`). For such patterns the
+    final output is taken from the text of the last AI message that has
+    content, so a task can still be scored on what the agent actually
+    answered. If no AI message has text, the output stays None.
 
     Args:
         result: the dict returned by calling the pattern (e.g.
@@ -65,6 +83,8 @@ def from_wp4_pattern_result(result: dict, input_query: str) -> EvaluationInput:
     output = result.get("structured_response")
     if hasattr(output, "model_dump"):   # live WP4 patterns return a Pydantic model; fixtures hold a dict
         output = output.model_dump()
+    if output is None:
+        output = _last_ai_text(result["messages"])
     return EvaluationInput(
         messages=result["messages"],
         input=input_query,
