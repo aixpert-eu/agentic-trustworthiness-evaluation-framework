@@ -257,8 +257,9 @@ def test_request_guard_stops_cleanly_and_resumes(tmp_path, items):
     assert capture(items, good, **_kw(tmp_path))["skipped"] == 1  # the finished run is kept, the rest resumes
 
 
-def test_free_requests_remaining_parses_openrouter_payload():
+def test_free_requests_remaining_parses_openrouter_payload(monkeypatch):
     from harness.maintie_demo.capture import free_requests_remaining
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)  # an empty key falls back to the environment; a real key there must not leak in
     body = {"data": {"free_model_daily_requests": {"used": 47, "limit": 50, "remaining": 3}}}
     assert free_requests_remaining("k", fetch=lambda url, headers: body) == 3
     assert free_requests_remaining("k", fetch=lambda url, headers: {"data": {}}) is None
