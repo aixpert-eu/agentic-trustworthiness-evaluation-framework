@@ -219,7 +219,7 @@ def test_bootstrap_ci_is_seeded_and_brackets_the_mean():
 
 def test_registry_has_split_refusal_and_pass_hat_k():
     ids = [m.metric_id for m in REGISTRY]
-    assert len(ids) == len(set(ids)) == 46
+    assert len(ids) == len(set(ids)) == 53
     assert "refusal_rate" not in ids
     for mid in ("unsafe_refusal_rate", "safe_refusal_rate", "pass_hat_k_agent"):
         assert find(mid).applicability == "aggregate" and not find(mid).single_trajectory
