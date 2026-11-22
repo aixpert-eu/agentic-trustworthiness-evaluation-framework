@@ -29,6 +29,7 @@ from contracts.evaluator import EvaluationResult
 from harness.adapters import from_wp4_pattern_result
 from harness.evaluate_trajectory import evaluate_trajectory
 from harness import stats
+from harness.runfiles import load_run_files
 from metrics.aggregate.cross_run_consistency import CrossRunConsistencyEvaluator
 from metrics.aggregate.pass_at_k import PassAtKAgentEvaluator
 from metrics.aggregate.pass_hat_k import DEFAULT_K, PassHatKAgentEvaluator
@@ -58,7 +59,7 @@ def res_dict(r: EvaluationResult | Exception | None) -> dict | None:
 
 
 def load_runs(runs_dir: str | Path) -> list[dict]:
-    return [json.loads(p.read_text(encoding="utf-8")) for p in sorted(Path(runs_dir).rglob("*__r*.json"))]
+    return load_run_files(runs_dir)
 
 
 def token_usage(messages: list[dict]) -> tuple[int, int]:
@@ -181,13 +182,15 @@ def aggregate_config(model: str, pattern: str, per_item: dict[str, list[dict]], 
 
 def filter_records(records: list[dict], *, item_ids: set[str] | None = None, max_runs: int | None = None,
                    models: list[str] | None = None, patterns: list[str] | None = None,
-                   common: bool = False) -> list[dict]:
+                   common: bool = False, min_runs: int | None = None) -> list[dict]:
     """Restrict captured runs so configurations are compared on the same footing.
 
     ``item_ids``: keep only these work orders. ``max_runs``: keep runs 0..max_runs-1.
     ``models``: case-insensitive substrings of the model id. ``patterns``: exact pattern names.
     ``common``: keep only (work order, run) pairs that every remaining configuration has, so a
     model captured on fewer items or runs cannot look better or worse because of that.
+    ``min_runs``: keep only work orders that have runs 0..min_runs-1 in every remaining configuration, so a
+    capture that was extended only part of the way does not pull k down for everyone.
     """
     keep = []
     needles = [m.lower() for m in models or []]
@@ -207,6 +210,13 @@ def filter_records(records: list[dict], *, item_ids: set[str] | None = None, max
             per_cfg[(r["model"], r["pattern"])].add((r["item_id"], r["run"]))
         shared = set.intersection(*per_cfg.values())
         keep = [r for r in keep if (r["item_id"], r["run"]) in shared]
+    if min_runs and keep:
+        have: dict[tuple[str, str], dict[str, set[int]]] = defaultdict(lambda: defaultdict(set))
+        for r in keep:
+            have[(r["model"], r["pattern"])][r["item_id"]].add(r["run"])
+        needed = set(range(min_runs))
+        full = set.intersection(*[{i for i, runs in per_item.items() if needed <= runs} for per_item in have.values()])
+        keep = [r for r in keep if r["item_id"] in full]
     return keep
 
 
@@ -288,6 +298,8 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--patterns", help="comma-separated pattern names to include (react,basic_rag)")
     ap.add_argument("--common", action="store_true",
                     help="keep only (work order, run) pairs that every configuration has, for like-for-like comparison")
+    ap.add_argument("--min-runs", type=int, default=None, metavar="M",
+                    help="keep only work orders that have runs 0..M-1 in every configuration (use after extending a capture part of the way)")
     ap.add_argument("--prices", help='JSON file {"model": [usd_per_1k_input, usd_per_1k_output]}')
     ap.add_argument("--latency-budget", type=float, default=DEFAULT_LATENCY_BUDGET_S)
     ap.add_argument("--cost-budget", type=float, default=DEFAULT_COST_BUDGET_USD)
@@ -300,14 +312,15 @@ def main(argv: list[str] | None = None) -> None:
     item_ids = {i.item_id for i in select_eval_items(list(gold.values()), n=args.n, seed=args.seed)} if args.n else None
     split = lambda v: [x.strip() for x in v.split(",") if x.strip()] if v else None  # noqa: E731
     records = filter_records(load_runs(args.runs), item_ids=item_ids, max_runs=args.max_runs,
-                             models=split(args.models), patterns=split(args.patterns), common=args.common)
+                             models=split(args.models), patterns=split(args.patterns), common=args.common, min_runs=args.min_runs)
     if not records:
-        raise SystemExit("no runs left after filtering; check --runs, --n, --models, --patterns")
+        raise SystemExit("no runs left after filtering; check --runs, --n, --models, --patterns, --min-runs")
     parts = [f"first {args.n} work orders (seed {args.seed})" if args.n else None,
              f"runs 0..{args.max_runs - 1}" if args.max_runs else None,
              f"models matching {args.models}" if args.models else None,
              f"patterns {args.patterns}" if args.patterns else None,
-             "only (work order, run) pairs present for every configuration" if args.common else None]
+             "only (work order, run) pairs present for every configuration" if args.common else None,
+             f"only work orders with at least {args.min_runs} runs in every configuration" if args.min_runs else None]
     note = ("Subset: " + "; ".join(p for p in parts if p) + ".") if any(parts) else None
     try:
         results = evaluate_all(records, gold, prices, args.latency_budget, args.cost_budget, subset_note=note, k=args.k, n_boot=args.bootstrap)

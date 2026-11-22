@@ -27,6 +27,8 @@ from harness.maintie_demo.capture import (
     slug,
 )
 
+from harness.runfiles import read_run_file, write_run_file
+
 from .data import load_conversations, load_graphs, matched_pairs, next_system_node, operator_turns, select_pairs
 
 AgentFn = Callable[[list[tuple[str, str]]], dict]
@@ -85,11 +87,10 @@ def capture(conv_ids: list[str], convs: dict[str, dict], graphs: dict[str, dict]
         conv = convs[conv_id]
         for run in range(runs):
             path = run_path(out_dir, model, pattern, conv_id, run)
-            if path.exists():
-                prev = json.loads(path.read_text(encoding="utf-8"))
-                if not (prev.get("error") and retry_errors):
-                    counts["skipped"] += 1
-                    continue
+            prev = read_run_file(path)  # None when missing or cut short by a killed job: run it (again)
+            if prev is not None and not (prev.get("error") and retry_errors):
+                counts["skipped"] += 1
+                continue
             if min_free_requests is not None and remaining_fn is not None:
                 left = remaining_fn()
                 if left is not None and left < min_free_requests:
@@ -110,8 +111,7 @@ def capture(conv_ids: list[str], convs: dict[str, dict], graphs: dict[str, dict]
                              "variant": conv.get("variant"), "robustness_axis": conv.get("robustness_axis")},
                 "provenance": provenance or {}, "captured_at": datetime.now(timezone.utc).isoformat(),
             }
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(record, indent=1), encoding="utf-8")
+            write_run_file(path, record)
             counts["errors" if err else "done"] += 1
             log(f"[{model} | {pattern}] {conv_id} run {run}: {'ERROR ' + err if err else f'ok, {len(per_turn)} turns'} "
                 f"({record['wall_seconds']:.0f}s)")

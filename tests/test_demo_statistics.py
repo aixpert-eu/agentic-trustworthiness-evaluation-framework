@@ -176,3 +176,65 @@ def test_diagflow_discriminative_power_separates_a_good_and_a_bad_configuration(
     res = diagflow_evaluate(diagflow_runs(tmp_path), dfworld["graphs"], dfworld["convs"], RuleJudge(), n_boot=20)
     dp = res["meta"]["meta_evaluation"]["discriminative_power"]
     assert dp["n_systems"] == 3 and dp["score"] > 0 and "share of ok turns" in dp["score_used"]
+
+
+# ---- a capture that was extended only part of the way ------------------------------------------------------------
+
+def test_maintie_min_runs_keeps_k_up_when_only_some_work_orders_were_repeated(tmp_path, items):
+    from harness.maintie_demo.evaluate import filter_records as maintie_filter
+    world = _maintie_world(tmp_path, items)  # two work orders, three runs, three configurations
+    extra = parse_record(REC_A, "g00002")
+    world[extra.item_id] = extra
+    for pattern in ("react", "basic_rag"):  # a third work order with one run only, and only for two of the three configurations
+        maintie_capture([extra], make_fake_agent(pattern, [extra], drop=0.0, wrong_class=0.0), model="m/a", pattern=pattern, runs=1,
+                        out_dir=tmp_path, log=lambda s: None)
+    records = maintie_runs(tmp_path)
+    ragged = maintie_evaluate(records, world, n_boot=20)
+    assert ragged["meta"]["pass_k"] == 1  # the single-run work order pulls k down for everybody
+
+    kept = maintie_filter(records, min_runs=3)
+    assert {r["item_id"] for r in kept} == {i.item_id for i in items}  # the work order with one run (and none for m/c) is left out
+    res = maintie_evaluate(kept, world, n_boot=20)
+    assert res["meta"]["pass_k"] == 3 and all(c["n_items"] == 2 for c in res["configs"])
+    assert maintie_filter([], min_runs=3) == []
+    # even one run is only enough if EVERY configuration has the work order: m/c never captured the third one
+    assert {r["item_id"] for r in maintie_filter(records, min_runs=1)} == {i.item_id for i in items}
+
+
+def test_diagflow_min_runs_keeps_only_conversations_every_configuration_repeated(tmp_path, dfworld):
+    from harness.diagflow_demo.evaluate import filter_records as diagflow_filter
+    clean_id, mixed_id = list(dfworld["convs"])
+    for model, pattern, kw in (("m/a", "react", dict(p_correct=1.0, p_force=0.0)), ("m/a", "basic_rag", dict(p_correct=1.0, p_force=0.0))):
+        diagflow_capture([clean_id], dfworld["convs"], dfworld["graphs"], make_fake_factory(pattern, **kw), model=model, pattern=pattern, runs=3,
+                         out_dir=tmp_path, retries=1, backoff=0, sleep=lambda s: None, log=lambda s: None)
+        diagflow_capture([mixed_id], dfworld["convs"], dfworld["graphs"], make_fake_factory(pattern, **kw), model=model, pattern=pattern, runs=1,
+                         out_dir=tmp_path, retries=1, backoff=0, sleep=lambda s: None, log=lambda s: None)
+    records = diagflow_runs(tmp_path)
+    assert diagflow_evaluate(records, dfworld["graphs"], dfworld["convs"], RuleJudge(), n_boot=20)["meta"]["pass_k"] == 1
+    kept = diagflow_filter(records, min_runs=3)
+    assert {r["conversation_id"] for r in kept} == {clean_id} and len(kept) == 6
+    res = diagflow_evaluate(kept, dfworld["graphs"], dfworld["convs"], RuleJudge(), n_boot=20)
+    assert res["meta"]["pass_k"] == 3
+
+
+# ---- a capture killed at its time limit ---------------------------------------------------------------------------
+
+def test_a_truncated_run_file_is_redone_not_fatal(tmp_path, items):
+    """A job killed in the middle of writing a run file leaves broken JSON; the next capture must redo that run."""
+    agent = make_fake_agent("react", items, drop=0.0, wrong_class=0.0)
+    first = maintie_capture(items, agent, model="m/a", pattern="react", runs=2, out_dir=tmp_path, log=lambda s: None)
+    assert first["done"] == 4
+    victim = sorted(tmp_path.rglob("*__r*.json"))[1]
+    victim.write_text('{"item_id": "g00000", "run": 1, "mess', encoding="utf-8")  # cut short
+    again = maintie_capture(items, agent, model="m/a", pattern="react", runs=2, out_dir=tmp_path, log=lambda s: None)
+    assert again["done"] == 1 and again["skipped"] == 3
+    assert len(maintie_runs(tmp_path)) == 4
+    assert not list(tmp_path.rglob("*.tmp"))  # writes go through a temporary name that is renamed, never left behind
+
+
+def test_evaluation_skips_an_unreadable_run_file_with_a_warning(tmp_path, items, capsys):
+    maintie_capture(items, make_fake_agent("react", items, drop=0.0, wrong_class=0.0), model="m/a", pattern="react", runs=2,
+                    out_dir=tmp_path, log=lambda s: None)
+    sorted(tmp_path.rglob("*__r*.json"))[0].write_text("not json", encoding="utf-8")
+    assert len(maintie_runs(tmp_path)) == 3
+    assert "unreadable run file" in capsys.readouterr().err

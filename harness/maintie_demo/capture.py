@@ -26,6 +26,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from harness.runfiles import read_run_file, write_run_file
+
 from .data import Item, load_split, select_eval_items
 
 AgentFn = Callable[[str], dict]
@@ -174,11 +176,10 @@ def capture(
     for item in items:
         for run in range(runs):
             path = run_path(Path(out_dir), model, pattern, item.item_id, run)
-            if path.exists():
-                prev = json.loads(path.read_text(encoding="utf-8"))
-                if not (prev.get("error") and retry_errors):
-                    counts["skipped"] += 1
-                    continue
+            prev = read_run_file(path)  # None when missing or cut short by a killed job: run it (again)
+            if prev is not None and not (prev.get("error") and retry_errors):
+                counts["skipped"] += 1
+                continue
             if min_free_requests is not None and remaining_fn is not None and live % check_every == 0:
                 left = remaining_fn()
                 if left is not None and left < min_free_requests:
@@ -198,8 +199,7 @@ def capture(
                 "structured_response": to_jsonable(result.get("structured_response")) if result else None,
                 "context": to_jsonable(result.get("context")) if result else None,
             }
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(record, indent=1), encoding="utf-8")
+            write_run_file(path, record)
             counts["errors" if err else "done"] += 1
             log(f"[{model} | {pattern}] {item.item_id} run {run}: {'ERROR ' + err if err else 'ok'} ({elapsed:.1f}s)")
     return counts

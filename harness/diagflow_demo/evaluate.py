@@ -32,6 +32,7 @@ from typing import Any
 
 from contracts.evaluator import EvaluationInput
 from harness import stats
+from harness.runfiles import load_run_files
 from metrics.aggregate.cross_run_consistency import CrossRunConsistencyEvaluator
 from metrics.aggregate.pass_at_k import PassAtKAgentEvaluator
 from metrics.aggregate.pass_hat_k import DEFAULT_K, PassHatKAgentEvaluator
@@ -52,13 +53,16 @@ CATEGORIES = ("coverage_gap", "undocumented_malfunction", "unrelated_question")
 
 def load_runs(runs_dir: str | Path) -> list[dict]:
     """Every DiagFlowBench run file under ``runs_dir``; other JSON that happens to match (e.g. MaintIE runs) is ignored."""
-    recs = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(Path(runs_dir).rglob("*__r*.json"))]
+    recs = load_run_files(runs_dir)
     return [r for r in recs if isinstance(r, dict) and "conversation_id" in r and "per_turn" in r]
 
 
 def filter_records(records: list[dict], *, conv_ids: set[str] | None = None, max_runs: int | None = None,
-                   models: list[str] | None = None, patterns: list[str] | None = None, common: bool = False) -> list[dict]:
-    """Same footing for every configuration: see harness.maintie_demo.evaluate.filter_records."""
+                   models: list[str] | None = None, patterns: list[str] | None = None, common: bool = False,
+                   min_runs: int | None = None) -> list[dict]:
+    """Same footing for every configuration: see harness.maintie_demo.evaluate.filter_records.
+
+    ``min_runs``: keep only conversations that have runs 0..min_runs-1 in every remaining configuration."""
     needles = [m.lower() for m in models or []]
     keep = [r for r in records
             if (conv_ids is None or r["conversation_id"] in conv_ids)
@@ -71,6 +75,13 @@ def filter_records(records: list[dict], *, conv_ids: set[str] | None = None, max
             per_cfg[(r["model"], r["pattern"])].add((r["conversation_id"], r["run"]))
         shared = set.intersection(*per_cfg.values())
         keep = [r for r in keep if (r["conversation_id"], r["run"]) in shared]
+    if min_runs and keep:
+        have: dict[tuple[str, str], dict[str, set[int]]] = defaultdict(lambda: defaultdict(set))
+        for r in keep:
+            have[(r["model"], r["pattern"])][r["conversation_id"]].add(r["run"])
+        needed = set(range(min_runs))
+        full = set.intersection(*[{c for c, runs in per_conv.items() if needed <= runs} for per_conv in have.values()])
+        keep = [r for r in keep if r["conversation_id"] in full]
     return keep
 
 
@@ -314,6 +325,8 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--models")
     ap.add_argument("--patterns")
     ap.add_argument("--common", action="store_true")
+    ap.add_argument("--min-runs", type=int, default=None, metavar="M",
+                    help="keep only conversations that have runs 0..M-1 in every configuration (use after extending a capture part of the way)")
     ap.add_argument("--prices")
     ap.add_argument("--latency-budget", type=float, default=DEFAULT_LATENCY_BUDGET_S)
     ap.add_argument("--cost-budget", type=float, default=DEFAULT_COST_BUDGET_USD)
@@ -325,11 +338,12 @@ def main(argv: list[str] | None = None) -> None:
     convs = {**load_conversations(args.diagflow, "clean"), **load_conversations(args.diagflow, "mixed")}
     split = lambda v: [x.strip() for x in v.split(",") if x.strip()] if v else None  # noqa: E731
     records = filter_records(load_runs(args.runs), max_runs=args.max_runs, models=split(args.models),
-                             patterns=split(args.patterns), common=args.common)
+                             patterns=split(args.patterns), common=args.common, min_runs=args.min_runs)
     if not records:
-        raise SystemExit("no runs left after filtering; check --runs, --models, --patterns, --max-runs")
+        raise SystemExit("no runs left after filtering; check --runs, --models, --patterns, --max-runs, --min-runs")
     parts = [f"runs 0..{args.max_runs - 1}" if args.max_runs else None, f"models matching {args.models}" if args.models else None,
-             f"patterns {args.patterns}" if args.patterns else None, "only (conversation, run) pairs present for every configuration" if args.common else None]
+             f"patterns {args.patterns}" if args.patterns else None, "only (conversation, run) pairs present for every configuration" if args.common else None,
+             f"only conversations with at least {args.min_runs} runs in every configuration" if args.min_runs else None]
     note = ("Subset: " + "; ".join(p for p in parts if p) + ".") if any(parts) else None
     judge = make_judge(args.judge, args.judge_cache, args.diagflow)
     prices = json.loads(Path(args.prices).read_text()) if args.prices else {}
