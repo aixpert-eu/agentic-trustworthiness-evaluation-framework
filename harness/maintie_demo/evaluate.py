@@ -4,9 +4,13 @@ Offline evaluation of captured MaintIE runs with the WP3 metrics.
 Per run (single-trajectory metrics through the standard harness):
     task_success, subgoal_progress, log_completeness, step_efficiency
 Per configuration (model x pattern), across work orders and runs:
-    pass^k (outcome reliability), cross_run_consistency (repeatability),
+    pass^k (outcome reliability), pass@k (capability within k tries), cross_run_consistency (repeatability),
     schema_violation_rate, latency, cost_per_query
 plus entity / relation precision, recall and F1 (task quality, micro-averaged).
+Across configurations: discriminative_power (does the task score separate the configurations).
+
+Every configuration is scored with the same k (the smallest number of runs any work order has, at most 5, or
+``--k``). 95% intervals are percentile bootstraps over work orders (see harness.stats).
 
 ``optimal_steps`` for step_efficiency is a demo choice, not a MaintIE fact:
 ReAct = one lookup per gold entity (a lookup is a tool step), Basic RAG = 1.
@@ -24,11 +28,14 @@ from typing import Any
 from contracts.evaluator import EvaluationResult
 from harness.adapters import from_wp4_pattern_result
 from harness.evaluate_trajectory import evaluate_trajectory
+from harness import stats
 from metrics.aggregate.cross_run_consistency import CrossRunConsistencyEvaluator
-from metrics.aggregate.pass_hat_k import PassHatKAgentEvaluator
+from metrics.aggregate.pass_at_k import PassAtKAgentEvaluator
+from metrics.aggregate.pass_hat_k import DEFAULT_K, PassHatKAgentEvaluator
 from metrics.common.schema_violation_rate import SchemaViolationRateEvaluator
 from metrics.efficiency.cost_per_query import CostPerQueryEvaluator
 from metrics.efficiency.latency import LatencyEvaluator
+from metrics.meta_evaluation.discriminative_power import DiscriminativePowerEvaluator
 
 from .data import Item, load_split, select_eval_items
 from .scoring import build_task, parse_prediction, prf, score_prediction
@@ -84,6 +91,9 @@ def evaluate_run(rec: dict, item: Item) -> dict:
     g = lambda k: (report[k].score if k in report and not isinstance(report[k], Exception) else None)  # noqa: E731
     out.update(task_success=g("task_success") or 0.0, subgoal_progress=g("subgoal_progress") or 0.0,
                log_completeness=g("log_completeness"), step_efficiency=g("step_efficiency"))
+    lc = report.get("log_completeness")
+    if lc is not None and not isinstance(lc, Exception) and lc.metadata.get("tool_calls_seen") == 0:
+        out["log_completeness"] = None  # no tool calls: the evaluator scores 1.0 by default, which would read as a pass
     out["tokens_in"], out["tokens_out"] = token_usage(rec["messages"])
     out["n_tool_calls"] = sum(len(m.get("tool_calls") or []) for m in rec["messages"])
     return out
@@ -101,8 +111,26 @@ def _safe(fn) -> dict | None:
         return {"error": f"{type(e).__name__}: {e}"}
 
 
+def _with_ci(res: dict | None, ci: tuple[float, float] | None) -> dict | None:
+    if res is not None and "error" not in res and ci is not None:
+        res["ci95"] = [ci[0], ci[1]]
+    return res
+
+
+def _micro_f1_ci(per_item: dict[str, list[dict]], kind: str, n_boot: int) -> list[float] | None:
+    clusters = [[r["quality"][kind] for r in rs] for rs in per_item.values()]
+
+    def f1(sample: list[list[dict]]) -> float:
+        qs = [q for c in sample for q in c]
+        return prf(sum(q["tp"] for q in qs), sum(q["n_pred"] for q in qs), sum(q["n_gold"] for q in qs))["f1"]
+
+    ci = stats.cluster_bootstrap(clusters, f1, n_boot=n_boot)
+    return None if ci is None else [ci[0], ci[1]]
+
+
 def aggregate_config(model: str, pattern: str, per_item: dict[str, list[dict]], items: dict[str, Item],
-                     price: tuple[float, float], latency_budget: float, cost_budget: float) -> dict:
+                     price: tuple[float, float], latency_budget: float, cost_budget: float,
+                     k: int | None = None, n_boot: int = stats.N_BOOT) -> dict:
     runs = [r for rs in per_item.values() for r in rs]
     micro = {}
     for kind in ("entity", "relation"):
@@ -111,6 +139,12 @@ def aggregate_config(model: str, pattern: str, per_item: dict[str, list[dict]], 
     problems = [(len(rs), int(sum(r["task_success"] >= 1.0 for r in rs))) for rs in per_item.values()]
     f1_by_item = [[r["quality"]["entity"]["f1"] for r in rs] for rs in per_item.values()]
     n_runs_min = min(len(rs) for rs in per_item.values())
+    k = k if k is not None else min(DEFAULT_K, n_runs_min)
+    pass_hat = _safe(lambda: PassHatKAgentEvaluator().evaluate_problems(problems, k))
+    pass_at = _safe(lambda: PassAtKAgentEvaluator().evaluate_problems(problems, k))
+    for res, ev in ((pass_hat, PassHatKAgentEvaluator), (pass_at, PassAtKAgentEvaluator)):
+        _with_ci(res, stats.cluster_bootstrap(problems, lambda sample, ev=ev: ev().evaluate_problems(sample, k).score, n_boot=n_boot)
+                 if res is not None and "error" not in res else None)
     mean_s = _mean([r["seconds"] for r in runs])
     cost = _mean([r["tokens_in"] / 1000 * price[0] + r["tokens_out"] / 1000 * price[1] for r in runs])
     return {
@@ -121,7 +155,10 @@ def aggregate_config(model: str, pattern: str, per_item: dict[str, list[dict]], 
         "log_completeness": _mean([r["log_completeness"] for r in runs]),
         "step_efficiency": _mean([r["step_efficiency"] for r in runs]),
         "entity": micro["entity"], "relation": micro["relation"],
-        "pass_hat_k": _safe(lambda: PassHatKAgentEvaluator().evaluate_problems(problems)),
+        "k": k, "pass_hat_k": pass_hat, "pass_at_k": pass_at,
+        "ci95": {"task_success_rate": stats.mean_ci([[r["task_success"] for r in rs] for rs in per_item.values()], n_boot=n_boot),
+                 "subgoal_progress": stats.mean_ci([[r["subgoal_progress"] for r in rs] for rs in per_item.values()], n_boot=n_boot),
+                 "entity_f1": _micro_f1_ci(per_item, "entity", n_boot), "relation_f1": _micro_f1_ci(per_item, "relation", n_boot)},
         "cross_run_consistency": _safe(lambda: CrossRunConsistencyEvaluator().evaluate_runs(f1_by_item)) if n_runs_min >= 2 else None,
         "schema_conformance": _safe(lambda: SchemaViolationRateEvaluator().evaluate_batch(
             [r["predicted"] if r["structured"] else None for r in runs])),
@@ -182,9 +219,32 @@ def coverage_warning(configs: list[dict]) -> str | None:
     return f"configurations differ in coverage ({detail}). Use --n/--runs/--common to compare like with like."
 
 
+def common_k(grouped: dict, k: int | None) -> int:
+    """The k every configuration is scored with: ``k`` if given, else the smallest run count of any work order (at most 5)."""
+    fewest = min((len(rs) for per_item in grouped.values() for rs in per_item.values()), default=1)
+    if k is None:
+        return min(DEFAULT_K, fewest)
+    if k > fewest:
+        raise ValueError(f"--k {k} needs at least {k} runs of every work order in every configuration; the fewest is {fewest}. "
+                         "Capture more runs, or use --max-runs/--common to compare on the same footing.")
+    return k
+
+
+def discriminative_power(grouped: dict) -> dict | None:
+    """Does the task score (entity F1 per run) separate the configurations? Meta-evaluation, whole comparison."""
+    by_system = {f"{m} | {p}": [r["quality"]["entity"]["f1"] for rs in per_item.values() for r in rs]
+                 for (m, p), per_item in grouped.items()}
+    if len(by_system) < 2:
+        return None
+    res = _safe(lambda: DiscriminativePowerEvaluator().evaluate_groups(by_system))
+    if res is not None and "error" not in res:
+        res.update(score_used="entity F1 per run", n_systems=len(by_system))
+    return res
+
+
 def evaluate_all(records: list[dict], items: dict[str, Item], prices: dict[str, tuple[float, float]] | None = None,
                  latency_budget: float = DEFAULT_LATENCY_BUDGET_S, cost_budget: float = DEFAULT_COST_BUDGET_USD,
-                 subset_note: str | None = None) -> dict:
+                 subset_note: str | None = None, k: int | None = None, n_boot: int = stats.N_BOOT) -> dict:
     prices = prices or {}
     grouped: dict[tuple[str, str], dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
     provenance: dict[str, Any] = {}
@@ -193,19 +253,24 @@ def evaluate_all(records: list[dict], items: dict[str, Item], prices: dict[str, 
             continue
         grouped[(rec["model"], rec["pattern"])][rec["item_id"]].append(evaluate_run(rec, items[rec["item_id"]]))
         provenance[rec["model"]] = rec.get("provenance", {})
+    k_used = common_k(grouped, k)
     configs = []
     for (model, pattern), per_item in sorted(grouped.items()):
         for rs in per_item.values():
             rs.sort(key=lambda r: r["run"])
         configs.append(aggregate_config(model, pattern, per_item, items, tuple(prices.get(model, (0.0, 0.0))),
-                                        latency_budget, cost_budget))
+                                        latency_budget, cost_budget, k=k_used, n_boot=n_boot))
     return {
         "meta": {"generated_at": datetime.now(timezone.utc).isoformat(), "dataset": "MaintIE (nlp-tlp/maintie, MIT), gold split",
                  "latency_budget_s": latency_budget, "cost_budget_usd": cost_budget, "prices_usd_per_1k": prices,
-                 "provenance": provenance,
-                 "notes": ["Entity match = (normalised text, top-level class); relation match = (head text, tail text, type).",
+                 "provenance": provenance, "pass_k": k_used,
+                 "bootstrap": {"method": "percentile bootstrap over work orders", "n_boot": n_boot, "level": stats.LEVEL, "seed": stats.SEED},
+                 "meta_evaluation": {"discriminative_power": discriminative_power(grouped)},
+                 "notes": [f"pass^k and pass@k use k={k_used} for every configuration. 95% intervals are percentile bootstraps over work orders; with few work orders they indicate how far a number could move.",
+                           "Entity match = (normalised text, top-level class); relation match = (head text, tail text, type).",
                            "task_success = every gold entity found with the right class; subgoal_progress = fraction of gold entities and relations found.",
-                           "step_efficiency optimal steps: ReAct = one lookup per gold entity, Basic RAG = 1."]
+                           "step_efficiency optimal steps: ReAct = one lookup per gold entity, Basic RAG = 1.",
+                           "Log completeness is shown only for runs that made tool calls (a run with none has nothing to log, so it is not scored as a pass)."]
                  + ([subset_note] if subset_note else [])},
         "configs": configs,
     }
@@ -226,6 +291,8 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--prices", help='JSON file {"model": [usd_per_1k_input, usd_per_1k_output]}')
     ap.add_argument("--latency-budget", type=float, default=DEFAULT_LATENCY_BUDGET_S)
     ap.add_argument("--cost-budget", type=float, default=DEFAULT_COST_BUDGET_USD)
+    ap.add_argument("--k", type=int, default=None, help="k for pass^k and pass@k, the same for every configuration (default: fewest runs per work order, at most 5)")
+    ap.add_argument("--bootstrap", type=int, default=stats.N_BOOT, metavar="N", help="bootstrap draws for the 95%% intervals (default %(default)s)")
     args = ap.parse_args(argv)
 
     gold = {i.item_id: i for i in load_split(Path(args.maintie) / "data" / "gold_release.json", "g")}
@@ -242,7 +309,10 @@ def main(argv: list[str] | None = None) -> None:
              f"patterns {args.patterns}" if args.patterns else None,
              "only (work order, run) pairs present for every configuration" if args.common else None]
     note = ("Subset: " + "; ".join(p for p in parts if p) + ".") if any(parts) else None
-    results = evaluate_all(records, gold, prices, args.latency_budget, args.cost_budget, subset_note=note)
+    try:
+        results = evaluate_all(records, gold, prices, args.latency_budget, args.cost_budget, subset_note=note, k=args.k, n_boot=args.bootstrap)
+    except ValueError as e:
+        raise SystemExit(str(e))
     warn = coverage_warning(results["configs"])
     if warn:
         print("WARNING:", warn)

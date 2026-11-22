@@ -4,10 +4,16 @@ Per configuration (model x pattern), pooled over conversations and runs:
     on-procedure   step accuracy (next step), branch following, termination recognition   (clean conversations)
     off-procedure  correct abstention, forced mapping, fabrication, over-abstention, recovery, abstention
                    decision quality (escalation_appropriateness)                          (mixed conversations)
-    reliability    turn-level pass^k and cross-run repeatability (need runs >= 2 to differ from one run)
+    reliability    turn-level pass^k and pass@k, cross-run repeatability (need runs >= 2 to differ from one run)
+    auditability   log completeness of tool calls (only for patterns that make tool calls)
+    across configs discriminative_power: does the share of ok turns per run separate the configurations
     efficiency     latency, cost, tokens and tool calls per turn
 Optionally adds the DiagFlowBench paper's published models as reference rows (``--reference``), re-scored
 offline from the released results and judge cache with the same code.
+
+Every configuration is scored with the same k (the fewest runs any conversation has, at most 5, or ``--k``).
+95% intervals on the rates are percentile bootstraps over conversations (see harness.stats); the published
+reference rows have none.
 
 Demo choices: a step is correct when the reply names the NEXT scripted step (the benchmark's code compares
 with the step just answered); termination accepts a reply that quotes the terminal node; a turn is ok when
@@ -24,11 +30,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from contracts.evaluator import EvaluationInput
+from harness import stats
 from metrics.aggregate.cross_run_consistency import CrossRunConsistencyEvaluator
-from metrics.aggregate.pass_hat_k import PassHatKAgentEvaluator
+from metrics.aggregate.pass_at_k import PassAtKAgentEvaluator
+from metrics.aggregate.pass_hat_k import DEFAULT_K, PassHatKAgentEvaluator
 from metrics.diagnostic_dialogue.node_matching import nodes_of
 from metrics.efficiency.cost_per_query import CostPerQueryEvaluator
 from metrics.efficiency.latency import LatencyEvaluator
+from metrics.meta_evaluation.discriminative_power import DiscriminativePowerEvaluator
+from metrics.trajectory.log_completeness import LogCompletenessEvaluator
 
 from .data import load_conversations, load_graphs, next_system_node, operator_turns
 from .judge import CacheJudge, HaikuJudge, Judge
@@ -75,6 +86,23 @@ def _safe(fn):
         return {"error": f"{type(e).__name__}: {e}"}
 
 
+def tool_call_log(per_turn: list[dict]) -> tuple[int, int]:
+    """(complete tool calls, tool calls seen) over a run, checked turn by turn with the log_completeness metric."""
+    seen = complete = 0
+    for t in per_turn:
+        res = LogCompletenessEvaluator().evaluate(EvaluationInput(messages=t.get("messages") or [], input="", output=None))
+        n = int(res.metadata.get("tool_calls_seen", 0))
+        seen += n
+        complete += n - len(res.metadata.get("incomplete_ids", []))
+    return complete, seen
+
+
+def ok_flags(s: dict) -> list[bool]:
+    """One flag per gold turn of a scored run; a turn the run never reached or that was not judged counts as a failure."""
+    by_idx = {t["turn_index"]: t for t in s["turns"]}
+    return [bool(by_idx[k]["ok"]) if k in by_idx else False for k in range(s["n_gold_turns"])]
+
+
 def evaluate_run(rec: dict, graph: dict, gold: dict, judge: Judge | None) -> dict:
     """Score one captured conversation; unreached turns of an errored run count as failures."""
     for turn in rec["per_turn"]:  # runs from other tools may lack the expected step
@@ -92,11 +120,22 @@ def evaluate_run(rec: dict, graph: dict, gold: dict, judge: Judge | None) -> dic
     sc.update(run=rec["run"], error=rec.get("error"), n_gold_turns=n_gold, n_reached=len(sc["turns"]),
               gold_injection=[bool(t.get("is_injection")) for _, t in operator_turns(gold)],
               base_id=rec["conversation_id"], wall_seconds=rec.get("wall_seconds"))
+    sc["log_complete"], sc["log_seen"] = tool_call_log(rec["per_turn"])
     return sc
 
 
+def _headline(res: dict | None) -> float | None:
+    return None if not res else res["rate"] if res.get("rate") is not None else res.get("f1")
+
+
+def _with_ci(res: dict | None, ci: tuple[float, float] | None) -> dict | None:
+    if res is not None and "error" not in res and ci is not None:
+        res["ci95"] = [ci[0], ci[1]]
+    return res
+
+
 def aggregate_config(model: str, pattern: str, scored: list[dict], price: tuple[float, float],
-                     latency_budget: float, cost_budget: float) -> dict:
+                     latency_budget: float, cost_budget: float, k: int | None = None, n_boot: int = stats.N_BOOT) -> dict:
     metrics = aggregate_metrics([s for s in scored], accept_terminal_node=True)
     cases: dict[tuple[str, int], list[bool]] = defaultdict(list)  # (conversation, turn) -> ok per run
     by_conv: dict[str, list[list[bool]]] = defaultdict(list)
@@ -105,15 +144,12 @@ def aggregate_config(model: str, pattern: str, scored: list[dict], price: tuple[
     ok_clean: list[float] = []
     ok_valid: list[float] = []
     for s in scored:
-        flags = []
-        by_idx = {t["turn_index"]: t for t in s["turns"]}
-        for k in range(s["n_gold_turns"]):
-            ok = bool(by_idx[k]["ok"]) if k in by_idx else False  # not reached or unjudged counts as a failure
-            cases[(s["base_id"], k)].append(ok)
-            flags.append(ok)
+        flags = ok_flags(s)
+        for turn_k, ok in enumerate(flags):  # not reached or unjudged counts as a failure
+            cases[(s["base_id"], turn_k)].append(ok)
             if s["regime"] == "clean":
                 ok_clean.append(float(ok))
-            elif not s["gold_injection"][k]:
+            elif not s["gold_injection"][turn_k]:
                 ok_valid.append(float(ok))
         by_conv[s["base_id"]].append(flags)
         for t in s["turns"]:
@@ -121,6 +157,28 @@ def aggregate_config(model: str, pattern: str, scored: list[dict], price: tuple[
                 cat[t["category"]]["n"] += 1
                 cat[t["category"]][t["outcome"]] += 1
     n_runs_min = min((len(v) for v in by_conv.values()), default=0)
+    k = k if k is not None else min(DEFAULT_K, max(n_runs_min, 1))
+    problems = [(len(v), sum(v)) for v in cases.values()]
+    by_base: dict[str, list[list[tuple[int, int]]]] = defaultdict(list)  # conversation -> its turn cases (the resampling unit)
+    for (base, _turn), v in cases.items():
+        by_base[base].append([(len(v), sum(v))])
+    problem_clusters = [[p for c in cl for p in c] for cl in by_base.values()]
+    pass_hat = _safe(lambda: PassHatKAgentEvaluator().evaluate_problems(problems, k)) if problems else None
+    pass_at = _safe(lambda: PassAtKAgentEvaluator().evaluate_problems(problems, k)) if problems else None
+    for res, ev in ((pass_hat, PassHatKAgentEvaluator), (pass_at, PassAtKAgentEvaluator)):
+        if res is not None and "error" not in res:
+            _with_ci(res, stats.cluster_bootstrap(problem_clusters, lambda sample, ev=ev: ev().evaluate_problems([p for c in sample for p in c], k).score, n_boot=n_boot))
+    clusters_by_conv: dict[str, list[dict]] = defaultdict(list)
+    for s in scored:
+        clusters_by_conv[s["base_id"]].append(s)
+    ids = list(metrics)
+    cis = stats.cluster_bootstrap_many(
+        list(clusters_by_conv.values()),
+        lambda sample: {mid: _headline(r) for mid, r in aggregate_metrics([s for c in sample for s in c], accept_terminal_node=True).items() if mid in ids},
+        n_boot=n_boot)
+    for mid, res in metrics.items():
+        _with_ci(res, cis.get(mid))
+    log_seen = sum(s["log_seen"] for s in scored)
     consistency_in = [[sum(f) / len(f) for f in fl] for fl in by_conv.values()]
     secs = [t["seconds"] for t in turns if t.get("seconds") is not None]
     mean_s = _mean(secs)
@@ -131,7 +189,8 @@ def aggregate_config(model: str, pattern: str, scored: list[dict], price: tuple[
         "n_unjudged": sum(s["n_unjudged"] for s in scored), "metrics": metrics,
         "turn_ok_clean": _mean(ok_clean), "turn_ok_valid_in_mixed": _mean(ok_valid),
         "by_category": cat,
-        "pass_hat_k": _safe(lambda: PassHatKAgentEvaluator().evaluate_problems([(len(v), sum(v)) for v in cases.values()])) if cases else None,
+        "k": k, "pass_hat_k": pass_hat, "pass_at_k": pass_at,
+        "log_completeness": (sum(s["log_complete"] for s in scored) / log_seen) if log_seen else None, "tool_calls_logged": log_seen,
         "cross_run_consistency": _safe(lambda: CrossRunConsistencyEvaluator().evaluate_runs(consistency_in)) if n_runs_min >= 2 else None,
         "latency": _safe(lambda: LatencyEvaluator().evaluate_measurement(mean_s, latency_budget)) if mean_s is not None else None,
         "latency_mean_s": mean_s, "cost": _safe(lambda: CostPerQueryEvaluator().evaluate_measurement(cost, cost_budget)) if cost is not None else None,
@@ -144,9 +203,40 @@ def aggregate_config(model: str, pattern: str, scored: list[dict], price: tuple[
     }
 
 
+def common_k(grouped: dict, k: int | None) -> int:
+    """The k every configuration is scored with: ``k`` if given, else the fewest runs of any conversation (at most 5)."""
+    fewest = min((len(v) for scored in grouped.values() for v in _runs_by_conversation(scored).values()), default=1)
+    if k is None:
+        return min(DEFAULT_K, fewest)
+    if k > fewest:
+        raise ValueError(f"--k {k} needs at least {k} runs of every conversation in every configuration; the fewest is {fewest}. "
+                         "Capture more runs, or use --max-runs/--common to compare on the same footing.")
+    return k
+
+
+def _runs_by_conversation(scored: list[dict]) -> dict[str, list[dict]]:
+    out: dict[str, list[dict]] = defaultdict(list)
+    for s in scored:
+        out[s["base_id"]].append(s)
+    return out
+
+
+def discriminative_power(grouped: dict) -> dict | None:
+    """Does the share of ok turns per run separate the configurations? Meta-evaluation, whole comparison."""
+    by_system = {f"{m} | {p}": [sum(f) / len(f) for s in scored for f in [ok_flags(s)] if f] for (m, p), scored in grouped.items()}
+    by_system = {name: xs for name, xs in by_system.items() if xs}
+    if len(by_system) < 2:
+        return None
+    res = _safe(lambda: DiscriminativePowerEvaluator().evaluate_groups(by_system))
+    if res is not None and "error" not in res:
+        res.update(score_used="share of ok turns per run", n_systems=len(by_system))
+    return res
+
+
 def evaluate_all(records: list[dict], graphs: dict, convs: dict, judge: Judge | None, prices: dict | None = None,
                  latency_budget: float = DEFAULT_LATENCY_BUDGET_S, cost_budget: float = DEFAULT_COST_BUDGET_USD,
-                 reference: list[dict] | None = None, subset_note: str | None = None) -> dict:
+                 reference: list[dict] | None = None, subset_note: str | None = None, k: int | None = None,
+                 n_boot: int = stats.N_BOOT) -> dict:
     prices = prices or {}
     grouped: dict[tuple[str, str], list[dict]] = defaultdict(list)
     provenance: dict[str, Any] = {}
@@ -155,14 +245,17 @@ def evaluate_all(records: list[dict], graphs: dict, convs: dict, judge: Judge | 
             continue
         grouped[(rec["model"], rec["pattern"])].append(evaluate_run(rec, graphs[rec["graph_id"]], convs[rec["conversation_id"]], judge))
         provenance[rec["model"]] = rec.get("provenance", {})
-    configs = [aggregate_config(m, p, scored, tuple(prices.get(m, (0.0, 0.0))), latency_budget, cost_budget)
+    k_used = common_k(grouped, k)
+    configs = [aggregate_config(m, p, scored, tuple(prices.get(m, (0.0, 0.0))), latency_budget, cost_budget, k=k_used, n_boot=n_boot)
                for (m, p), scored in sorted(grouped.items())]
     unjudged = sum(c["n_unjudged"] for c in configs)
     notes = ["Step accuracy: the reply names the NEXT scripted step (Jaccard node matching, threshold 0.05, as DiagFlowBench). "
              "Termination accepts a reply that quotes the terminal node.",
              "Off-procedure outcomes (correct abstention, forced mapping, fabrication) and over-abstention come from the DiagFlowBench judge (Claude Haiku 4.5, temperature 0).",
              "A turn is ok when the step is right (on-procedure) or the assistant abstains (off-procedure). pass^k is over turns; repeatability over per-run share of ok turns.",
-             "The assistant sees its own earlier replies as history, as in the benchmark. Unreached turns of an errored run count as failures."]
+             "The assistant sees its own earlier replies as history, as in the benchmark. Unreached turns of an errored run count as failures.",
+             f"pass^k and pass@k use k={k_used} for every configuration. 95% intervals are percentile bootstraps over conversations; with few conversations they indicate how far a number could move.",
+             "Log completeness is shown only for patterns that make tool calls (with none there is nothing to log, so it is not scored as a pass)."]
     if subset_note:
         notes.append(subset_note)
     if reference:
@@ -171,7 +264,9 @@ def evaluate_all(records: list[dict], graphs: dict, convs: dict, judge: Judge | 
         notes.append(f"WARNING: {unjudged} off-procedure turn(s) have no judge label (no judge key and not in the cache); they are excluded from the outcome rates.")
     return {"meta": {"generated_at": datetime.now(timezone.utc).isoformat(), "dataset": "DiagFlowBench (CC-BY-4.0), matched clean and mixed conversations",
                      "latency_budget_s_per_turn": latency_budget, "cost_budget_usd_per_turn": cost_budget, "prices_usd_per_1k": prices,
-                     "provenance": provenance, "notes": notes},
+                     "provenance": provenance, "pass_k": k_used,
+                     "bootstrap": {"method": "percentile bootstrap over conversations", "n_boot": n_boot, "level": stats.LEVEL, "seed": stats.SEED},
+                     "meta_evaluation": {"discriminative_power": discriminative_power(grouped)}, "notes": notes},
             "configs": configs + (reference or [])}
 
 
@@ -222,6 +317,8 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--prices")
     ap.add_argument("--latency-budget", type=float, default=DEFAULT_LATENCY_BUDGET_S)
     ap.add_argument("--cost-budget", type=float, default=DEFAULT_COST_BUDGET_USD)
+    ap.add_argument("--k", type=int, default=None, help="k for pass^k and pass@k, the same for every configuration (default: fewest runs per conversation, at most 5)")
+    ap.add_argument("--bootstrap", type=int, default=stats.N_BOOT, metavar="N", help="bootstrap draws for the 95%% intervals (default %(default)s)")
     args = ap.parse_args(argv)
 
     graphs = load_graphs(args.diagflow)
@@ -237,7 +334,10 @@ def main(argv: list[str] | None = None) -> None:
     judge = make_judge(args.judge, args.judge_cache, args.diagflow)
     prices = json.loads(Path(args.prices).read_text()) if args.prices else {}
     ref = reference_configs(args.diagflow, graphs, convs) if args.reference else None
-    results = evaluate_all(records, graphs, convs, judge, prices, args.latency_budget, args.cost_budget, ref, note)
+    try:
+        results = evaluate_all(records, graphs, convs, judge, prices, args.latency_budget, args.cost_budget, ref, note, k=args.k, n_boot=args.bootstrap)
+    except ValueError as e:
+        raise SystemExit(str(e))
     Path(args.out).write_text(json.dumps(results, indent=1), encoding="utf-8")
     if isinstance(judge, HaikuJudge):
         print(f"judge: {judge.calls} new label(s) requested, cache at {args.judge_cache}")
