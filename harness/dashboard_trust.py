@@ -13,6 +13,8 @@ A dashboard template calls ``trustInit({rows, rowHtml, metrics})`` from its scri
 ``{id, dim, label, val, res, html, missing}``:
 
     val(c)     the config's value, or null when this run has none (the metric then counts as "not measured")
+    run        true for a metric of the whole comparison (for example discriminative power), shown under the
+               table instead of as a column; its val() ignores the configuration
     res(c)     the banded result object (with band_level / band_label) or null, used for the optional dimension band
     html(c)    the cell content
     missing    why the value can be absent, shown next to the metric when it is
@@ -136,13 +138,25 @@ TRUST_SECTION = r"""
 <p class="sub" id="tstatus" aria-live="polite"></p>
 </div></details>
 <div class="panel"><table id="trust"></table></div>
+<p class="sub" id="tnote"></p>
+<div class="panel" id="trun" hidden></div>
 <div class="missing" id="tmissing"></div>
 """
 
 TRUST_JS = r"""
+function ciText(r) {
+  return r && r.ci95 ? `95% interval ${r.ci95[0].toFixed(2)} to ${r.ci95[1].toFixed(2)}` : '';
+}
+function ciBar(ci) {
+  return ci ? `<div class="ciw" style="left:${100 * ci[0]}%;width:${Math.max(0, 100 * (ci[1] - ci[0]))}%"></div>` : '';
+}
+function ciPct(ci) {
+  return ci ? `95% interval ${(100 * ci[0]).toFixed(0)}% to ${(100 * ci[1]).toFixed(0)}%` : '';
+}
 function trustInit(o) {
   const tax = R.taxonomy || {dimensions: [], registry: {}}, reg = tax.registry || {};
   const rows = o.rows || [], all = o.metrics;
+  const meta = R.meta || {};
   const NEEDS = {common: 'output + reference or checks', trajectory: 'a tool-call trace', reflective: 'trials within one run',
     governance: 'governance events + labeled cases', efficiency: 'resource measurements + a budget', human_centricity: 'participant responses',
     probabilistic: 'probabilities or confidence data', aggregate: 'repeated runs or case sets', meta_evaluation: 'evaluation scores or reference data'};
@@ -151,7 +165,7 @@ function trustInit(o) {
   all.forEach(t => { if (!dimNames.includes(t.dim)) dimNames.push(t.dim); });
   const registered = Object.fromEntries(tax.dimensions.map(d => [d.name, d.registered]));
   const mById = Object.fromEntries(all.map(t => [t.id, t]));
-  const measured = all.filter(t => rows.some(c => t.val(c) != null));
+  const measured = all.filter(t => t.run ? t.val() != null : rows.some(c => t.val(c) != null));
   const isMeasured = id => measured.some(t => t.id === id);
   const regDims = id => (reg[id] && reg[id].dims) || (mById[id] ? [mById[id].dim] : []);
   const home = id => (mById[id] && mById[id].dim) || regDims(id)[0] || 'Not in this build\'s registry';
@@ -171,7 +185,8 @@ function trustInit(o) {
   const setStatus = s => { $('tstatus').textContent = s; };
 
   function draw() {
-    const shown = measured.filter(t => !sel || sel.has(t.id));
+    const shownAll = measured.filter(t => !sel || sel.has(t.id));
+    const shown = shownAll.filter(t => !t.run), shownRun = shownAll.filter(t => t.run);
     const shownDims = dimNames.filter(d => shown.some(t => t.dim === d));
     // coverage tiles
     $('tcover').innerHTML = dimNames.map(d => {
@@ -185,7 +200,8 @@ function trustInit(o) {
     syncChecks();
     // table
     if (!rows.length) { $('trust').innerHTML = '<tr><td class="mute">No runs to show yet.</td></tr>'; }
-    else if (!shown.length) { $('trust').innerHTML = '<tr><td class="mute">None of the selected metrics has a value in this run. They are listed below.</td></tr>'; }
+    else if (!shown.length && !shownRun.length) { $('trust').innerHTML = '<tr><td class="mute">None of the selected metrics has a value in this run. They are listed below.</td></tr>'; }
+    else if (!shown.length) { $('trust').innerHTML = '<tr><td class="mute">The selected metrics apply to the whole comparison; see below.</td></tr>'; }
     else {
       let h1 = '<tr><th rowspan="2">Configuration</th>', h2 = '<tr>';
       shownDims.forEach(d => {
@@ -209,6 +225,14 @@ function trustInit(o) {
       });
       $('trust').innerHTML = h1 + '</tr>' + h2 + '</tr>' + body;
     }
+    // note on k and intervals, run-level metrics
+    const notes = [];
+    if (meta.pass_k) notes.push(`pass^k and pass@k use k = ${meta.pass_k} for every configuration.`);
+    if (meta.bootstrap) notes.push(`Hover a band chip, or read the whiskers on the bars below, for the 95% interval (${meta.bootstrap.method}, ${meta.bootstrap.n_boot} draws).`);
+    $('tnote').textContent = notes.join(' ');
+    $('trun').hidden = !shownRun.length;
+    $('trun').innerHTML = shownRun.length ? '<div class="grp">Whole-comparison metrics</div><table><tr><th>Dimension</th><th>Metric</th><th>Result</th></tr>' +
+      shownRun.map(t => `<tr><td>${esc(t.dim)}</td><td title="${esc(t.id)}">${esc(t.label)}</td><td>${t.html()}</td></tr>`).join('') + '</table>' : '';
     // what is not measured
     const dormant = sel ? [] : all.filter(t => !isMeasured(t.id));  // this demo computes them, this run has no value
     const dormantIds = new Set(dormant.map(t => t.id));

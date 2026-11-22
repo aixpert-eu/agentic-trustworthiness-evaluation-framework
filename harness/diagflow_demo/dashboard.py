@@ -48,7 +48,7 @@ const color = c => ({react: 'var(--react)', basic_rag: 'var(--rag)', baseline: '
 const pct = x => x == null ? 'n/a' : (100 * x).toFixed(0) + '%', f2 = x => x == null ? 'n/a' : x.toFixed(2);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const m = (c, id) => (c.metrics || {})[id], rate = (c, id) => m(c, id) ? m(c, id).rate : null;
-const chip = r => !r ? 'n/a' : r.error ? '<span class="chip b0">error</span>' : `<span class="chip b${r.band_level}">${esc(r.band_label)}</span> <span class="n">${r.rate != null ? pct(r.rate) : f2(r.score)}</span>`;
+const chip = r => !r ? 'n/a' : r.error ? '<span class="chip b0">error</span>' : `<span class="chip b${r.band_level}" title="${esc(ciText(r))}">${esc(r.band_label)}</span> <span class="n">${r.rate != null ? pct(r.rate) : f2(r.score)}</span>`;
 $('sub').textContent = `${R.meta.dataset}. ${live.length} configuration(s)${ref.length ? ' plus ' + ref.length + ' published reference model(s)' : ''}, generated ${R.meta.generated_at.slice(0, 16).replace('T', ' ')} UTC.`;
 
 const sorted = [...live, ...ref.slice().sort((a, b) => (rate(b, 'correct_abstention_rate') ?? 0) - (rate(a, 'correct_abstention_rate') ?? 0))];
@@ -56,22 +56,29 @@ $('off').innerHTML = '<div class="legend"><span class="sw" style="background:var
   sorted.map(c => {
     const fa = rate(c, 'fabrication_rate'), fm = rate(c, 'forced_mapping_rate'), ca = rate(c, 'correct_abstention_rate');
     if (ca == null) return `<div class="row"><div class="lbl">${esc(key(c))}</div><div class="mute">no judged off-procedure turns</div><div></div></div>`;
-    return `<div class="div" style="opacity:${c.reference ? .8 : 1}"><div class="lbl" title="${esc(key(c))}"><span class="dot" style="background:${color(c)}"></span>${esc(key(c))}</div>
+    const tip = [['correct abstention', 'correct_abstention_rate'], ['forced mapping', 'forced_mapping_rate'], ['fabrication', 'fabrication_rate']]
+      .map(([l, id]) => { const r = m(c, id); return r && r.ci95 ? `${l} ${pct(r.rate)} (${ciPct(r.ci95)})` : ''; }).filter(Boolean).join('; ');
+    return `<div class="div" title="${esc(tip)}" style="opacity:${c.reference ? .8 : 1}"><div class="lbl" title="${esc(key(c))}"><span class="dot" style="background:${color(c)}"></span>${esc(key(c))}</div>
       <div class="left"><div class="seg" style="width:${100 * fm}%;background:var(--fm)"></div><div class="seg" style="width:${100 * fa}%;background:var(--fa)"></div></div>
       <div class="right"><div class="seg" style="width:${100 * ca}%;background:var(--ca)"></div></div>
       <div class="n mute">&nbsp;${pct(fm + fa)} | ${pct(ca)}</div></div>`;
   }).join('');
 
 const bars = [['step_accuracy', 'Step accuracy (reply names the next step)'], ['branch_following', 'Branch following (takes the branch the operator\'s answer selects)'], ['termination_recognition', 'Termination recognition (no further step at the end)']];
-$('on').innerHTML = bars.map(([id, title]) => `<div class="grp">${title}</div>` + sorted.map(c => {
+const anyCi = sorted.some(c => bars.some(([id]) => (m(c, id) || {}).ci95));
+$('on').innerHTML = (anyCi ? '<div class="legend">Whisker on a bar: 95% interval, bootstrap over conversations (the published reference rows have none).</div>' : '') +
+  bars.map(([id, title]) => `<div class="grp">${title}</div>` + sorted.map(c => {
   const v = rate(c, id); if (v == null) return '';
-  return `<div class="row"><div class="lbl" title="${esc(key(c))}"><span class="dot" style="background:${color(c)}"></span>${esc(key(c))}</div><div class="track"><div class="fill" style="width:${100 * v}%;background:${color(c)}"></div></div><div class="n">${pct(v)}</div></div>`;
+  const ci = (m(c, id) || {}).ci95;
+  return `<div class="row" title="${esc(ciPct(ci))}"><div class="lbl" title="${esc(key(c))}"><span class="dot" style="background:${color(c)}"></span>${esc(key(c))}</div><div class="track"><div class="fill" style="width:${100 * v}%;background:${color(c)}"></div>${ciBar(ci)}</div><div class="n">${pct(v)}</div></div>`;
 }).join('')).join('');
 
 __TRUST_JS__
 const NEEDS_RUNS = '<span class="mute">needs 2+ runs</span>', bandOnly = r => r && !r.error ? r : null;
 trustInit({rows: live, rowHtml: c => `<span class="dot" style="background:${color(c)}"></span>${esc(key(c))}`, metrics: [
   {id: 'pass_hat_k_agent', dim: 'Accuracy', label: 'Turn-level reliability (pass^k)', val: c => c.pass_hat_k, res: c => c.pass_hat_k, html: c => chip(c.pass_hat_k)},
+  {id: 'pass_at_k_agent', dim: 'Accuracy', label: 'Capability within k tries (pass@k)', val: c => c.pass_at_k, res: c => c.pass_at_k, html: c => chip(c.pass_at_k),
+    missing: 'needs the evaluate stage of this version (rerun it on the same runs)'},
   {id: 'cross_run_consistency', dim: 'Robustness', label: 'Repeatability (cross-run)', val: c => c.cross_run_consistency, res: c => c.cross_run_consistency,
     html: c => c.cross_run_consistency ? chip(c.cross_run_consistency) : NEEDS_RUNS, missing: 'needs 2 or more runs per conversation'},
   {id: 'error_recovery_rate', dim: 'Robustness', label: 'Recovery after a failed off-procedure turn', val: c => m(c, 'error_recovery_rate'), res: c => m(c, 'error_recovery_rate'), html: c => chip(m(c, 'error_recovery_rate')),
@@ -80,10 +87,16 @@ trustInit({rows: live, rowHtml: c => `<span class="dot" style="background:${colo
     missing: 'needs judged turns'},
   {id: 'escalation_appropriateness', dim: 'Autonomy', label: 'Abstains only when it should (F1)', val: c => m(c, 'escalation_appropriateness'), res: c => m(c, 'escalation_appropriateness'),
     html: c => { const e = m(c, 'escalation_appropriateness'); return e ? `<span class="chip b${e.band_level}">${esc(e.band_label)}</span> <span class="n">${f2(e.f1)}</span>` : 'n/a'; }, missing: 'needs judged turns'},
+  {id: 'log_completeness', dim: 'Transparency & Explainability', label: 'Tool-call log completeness', val: c => c.log_completeness, res: () => null,
+    html: c => c.log_completeness == null ? '<span class="mute">no tool calls</span>' : `<span class="n">${f2(c.log_completeness)}</span>`, missing: 'needs a pattern that makes tool calls (and the evaluate stage of this version)'},
   {id: 'latency', dim: 'Efficiency', label: 'Latency per turn', val: c => c.latency_mean_s, res: c => bandOnly(c.latency),
     html: c => c.latency_mean_s == null ? 'n/a' : c.latency_mean_s.toFixed(1) + ' s ' + (bandOnly(c.latency) ? chip({...c.latency, rate: null}) : '')},
   {id: 'cost_per_query', dim: 'Efficiency', label: 'Cost per turn', val: c => c.cost_mean_usd, res: c => bandOnly(c.cost),
-    html: c => c.cost_mean_usd == null ? 'n/a' : '$' + c.cost_mean_usd.toFixed(4) + ' ' + (bandOnly(c.cost) ? chip({...c.cost, rate: null}) : '')}
+    html: c => c.cost_mean_usd == null ? 'n/a' : '$' + c.cost_mean_usd.toFixed(4) + ' ' + (bandOnly(c.cost) ? chip({...c.cost, rate: null}) : '')},
+  {id: 'discriminative_power', dim: 'Auditability / Verifiability', run: true, label: 'Discriminative power (does the score separate the configurations)',
+    val: () => ((R.meta.meta_evaluation || {}).discriminative_power), res: () => null, missing: 'needs two or more configurations (and the evaluate stage of this version)',
+    html: () => { const r = R.meta.meta_evaluation.discriminative_power; return r.error ? '<span class="chip b0">error</span>' :
+      `<span class="chip b${r.band_level}">${esc(r.band_label)}</span> <span class="mute">${esc(r.explanation)} Score used: ${esc(r.score_used)}.</span>`; }}
 ]});
 
 $('eff').innerHTML = '<tr><th>Configuration</th><th>Latency per turn</th><th>Cost per turn</th><th>Tokens in / out per turn</th><th>Tool calls per turn</th><th>Errored runs</th></tr>' +

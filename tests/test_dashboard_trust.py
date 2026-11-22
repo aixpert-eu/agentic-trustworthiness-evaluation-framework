@@ -119,3 +119,22 @@ def test_command_line_accepts_a_selection_file(name, tmp_path):
     out = tmp_path / "out.html"
     DASHBOARDS[name].main(["--results", str(results), "--out", str(out), "--metrics", str(sel)])
     assert _data(out.read_text(encoding="utf-8"))["selection"] == {"label": "demo", "metrics": ["latency", "pass_hat_k_agent"]}
+
+
+@pytest.mark.parametrize("name", DASHBOARDS)
+def test_interval_helpers_are_shared_and_used_by_each_dashboard(name):
+    """The whisker and interval-text helpers live once in the shared script; each page uses them."""
+    html = DASHBOARDS[name].build_html(EMPTY)
+    for helper in ("function ciText", "function ciBar", "function ciPct"):
+        assert html.count(helper) == 1, helper
+    template = DASHBOARDS[name].TEMPLATE
+    assert "ciBar(" in template and "ciPct(" in template and "ciText(" in template
+    assert ".ciw{" in html  # whisker style comes from the shared theme
+
+
+@pytest.mark.parametrize("name", DASHBOARDS)
+def test_whole_comparison_metric_is_marked_as_run_level(name):
+    """Discriminative power describes the comparison, not one configuration, so it must not be a per-row column."""
+    template = DASHBOARDS[name].TEMPLATE
+    assert re.search(r"id: 'discriminative_power', dim: 'Auditability / Verifiability', run: true", template)
+    assert "pass_at_k_agent" in template and "log_completeness" in template

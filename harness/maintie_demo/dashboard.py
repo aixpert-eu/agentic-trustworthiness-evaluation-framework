@@ -42,32 +42,40 @@ const key = c => c.model + ' | ' + c.pattern, color = c => c.pattern === 'react'
 const pct = x => x == null ? 'n/a' : (100 * x).toFixed(0) + '%', f2 = x => x == null ? 'n/a' : x.toFixed(2);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const chip = r => !r ? 'n/a' : r.error ? '<span class="chip b0">error</span>' :
-  `<span class="chip b${r.band_level ?? (r.score >= 1 ? 4 : 0)}">${r.band_label ?? (r.score >= 1 ? 'all conform' : 'violations')}</span> <span class="n">${f2(r.score)}</span>`;
+  `<span class="chip b${r.band_level ?? (r.score >= 1 ? 4 : 0)}" title="${esc(ciText(r))}">${r.band_label ?? (r.score >= 1 ? 'all conform' : 'violations')}</span> <span class="n">${f2(r.score)}</span>`;
 $('sub').textContent = `${R.meta.dataset}. ${C.length} configuration(s), generated ${R.meta.generated_at.slice(0, 16).replace('T', ' ')} UTC.`;
 
 const bars = [['task_success_rate', 'Task success (all gold entities found, right class)', c => c.task_success_rate],
   ['subgoal_progress', 'Sub-goal progress (share of gold entities and relations found)', c => c.subgoal_progress],
   ['entity_f1', 'Entity F1', c => c.entity.f1], ['relation_f1', 'Relation F1', c => c.relation.f1]];
-$('quality').innerHTML = '<div class="legend"><span class="dot" style="background:var(--react)"></span>ReAct <span class="dot" style="background:var(--rag);margin-left:12px"></span>Basic RAG</div>' +
-  bars.map(([, title, fn]) => `<div class="grp">${title}</div>` + C.map(c => {
-    const v = fn(c) ?? 0;
-    return `<div class="row"><div class="lbl" title="${esc(key(c))}">${esc(key(c))}</div><div class="track"><div class="fill" style="width:${100 * v}%;background:${color(c)}"></div></div><div class="n">${pct(v)}</div></div>`;
+const anyCi = C.some(c => c.ci95 && Object.values(c.ci95).some(Boolean));
+$('quality').innerHTML = '<div class="legend"><span class="dot" style="background:var(--react)"></span>ReAct <span class="dot" style="background:var(--rag);margin-left:12px"></span>Basic RAG' +
+  (anyCi ? ' &nbsp; Whisker on a bar: 95% interval, bootstrap over work orders.' : '') + '</div>' +
+  bars.map(([id, title, fn]) => `<div class="grp">${title}</div>` + C.map(c => {
+    const v = fn(c) ?? 0, ci = c.ci95 ? c.ci95[id] : null;
+    return `<div class="row" title="${esc(ciPct(ci))}"><div class="lbl" title="${esc(key(c))}">${esc(key(c))}</div><div class="track"><div class="fill" style="width:${100 * v}%;background:${color(c)}"></div>${ciBar(ci)}</div><div class="n">${pct(v)}</div></div>`;
   }).join('')).join('');
 
 __TRUST_JS__
 const bandOnly = r => r && !r.error ? r : null;
 trustInit({rows: C, rowHtml: c => `<span class="dot" style="background:${color(c)}"></span>${esc(key(c))}`, metrics: [
   {id: 'pass_hat_k_agent', dim: 'Accuracy', label: 'Outcome reliability (pass^k)', val: c => c.pass_hat_k, res: c => c.pass_hat_k, html: c => chip(c.pass_hat_k)},
+  {id: 'pass_at_k_agent', dim: 'Accuracy', label: 'Capability within k tries (pass@k)', val: c => c.pass_at_k, res: c => c.pass_at_k, html: c => chip(c.pass_at_k),
+    missing: 'needs the evaluate stage of this version (rerun it on the same runs)'},
   {id: 'schema_violation_rate', dim: 'Accuracy', label: 'Schema conformance', val: c => c.schema_conformance, res: c => c.schema_conformance, html: c => chip(c.schema_conformance)},
   {id: 'cross_run_consistency', dim: 'Robustness', label: 'Repeatability (cross-run)', val: c => c.cross_run_consistency, res: c => c.cross_run_consistency, html: c => chip(c.cross_run_consistency),
     missing: 'needs 2 or more runs per item'},
-  {id: 'log_completeness', dim: 'Transparency & Explainability', label: 'Log completeness', val: c => c.log_completeness, res: () => null, html: c => `<span class="n">${f2(c.log_completeness)}</span>`,
-    missing: 'needs a tool-call trace'},
+  {id: 'log_completeness', dim: 'Transparency & Explainability', label: 'Log completeness', val: c => c.log_completeness, res: () => null, html: c => c.log_completeness == null ? '<span class="mute">no tool calls</span>' : `<span class="n">${f2(c.log_completeness)}</span>`,
+    missing: 'needs a pattern that makes tool calls'},
   {id: 'step_efficiency', dim: 'Efficiency', label: 'Step efficiency', val: c => c.step_efficiency, res: () => null, html: c => `<span class="n">${f2(c.step_efficiency)}</span>`, missing: 'needs a step budget'},
   {id: 'latency', dim: 'Efficiency', label: 'Latency per query', val: c => c.latency_mean_s, res: c => bandOnly(c.latency),
     html: c => c.latency_mean_s == null ? 'n/a' : c.latency_mean_s.toFixed(1) + ' s ' + (bandOnly(c.latency) ? chip(c.latency) : '')},
   {id: 'cost_per_query', dim: 'Efficiency', label: 'Cost per query', val: c => c.cost_mean_usd, res: c => bandOnly(c.cost),
-    html: c => c.cost_mean_usd == null ? 'n/a' : '$' + c.cost_mean_usd.toFixed(4) + ' ' + (bandOnly(c.cost) ? chip(c.cost) : '')}
+    html: c => c.cost_mean_usd == null ? 'n/a' : '$' + c.cost_mean_usd.toFixed(4) + ' ' + (bandOnly(c.cost) ? chip(c.cost) : '')},
+  {id: 'discriminative_power', dim: 'Auditability / Verifiability', run: true, label: 'Discriminative power (does the score separate the configurations)',
+    val: () => ((R.meta.meta_evaluation || {}).discriminative_power), res: () => null, missing: 'needs two or more configurations (and the evaluate stage of this version)',
+    html: () => { const r = R.meta.meta_evaluation.discriminative_power; return r.error ? '<span class="chip b0">error</span>' :
+      `<span class="chip b${r.band_level}">${esc(r.band_label)}</span> <span class="mute">${esc(r.explanation)} Score used: ${esc(r.score_used)}.</span>`; }}
 ]});
 
 $('eff').innerHTML = '<tr><th>Configuration</th><th>Latency (mean)</th><th>Cost per query</th><th>Tokens in / out</th><th>Tool calls</th><th>Errored runs</th></tr>' +
