@@ -30,7 +30,7 @@ from metrics.common.schema_violation_rate import SchemaViolationRateEvaluator
 from metrics.efficiency.cost_per_query import CostPerQueryEvaluator
 from metrics.efficiency.latency import LatencyEvaluator
 
-from .data import Item, load_split
+from .data import Item, load_split, select_eval_items
 from .scoring import build_task, parse_prediction, prf, score_prediction
 
 DEFAULT_LATENCY_BUDGET_S = 30.0
@@ -142,8 +142,49 @@ def aggregate_config(model: str, pattern: str, per_item: dict[str, list[dict]], 
     }
 
 
+def filter_records(records: list[dict], *, item_ids: set[str] | None = None, max_runs: int | None = None,
+                   models: list[str] | None = None, patterns: list[str] | None = None,
+                   common: bool = False) -> list[dict]:
+    """Restrict captured runs so configurations are compared on the same footing.
+
+    ``item_ids``: keep only these work orders. ``max_runs``: keep runs 0..max_runs-1.
+    ``models``: case-insensitive substrings of the model id. ``patterns``: exact pattern names.
+    ``common``: keep only (work order, run) pairs that every remaining configuration has, so a
+    model captured on fewer items or runs cannot look better or worse because of that.
+    """
+    keep = []
+    needles = [m.lower() for m in models or []]
+    for r in records:
+        if item_ids is not None and r["item_id"] not in item_ids:
+            continue
+        if max_runs is not None and r["run"] >= max_runs:
+            continue
+        if needles and not any(n in r["model"].lower() for n in needles):
+            continue
+        if patterns and r["pattern"] not in patterns:
+            continue
+        keep.append(r)
+    if common and keep:
+        per_cfg: dict[tuple[str, str], set[tuple[str, int]]] = defaultdict(set)
+        for r in keep:
+            per_cfg[(r["model"], r["pattern"])].add((r["item_id"], r["run"]))
+        shared = set.intersection(*per_cfg.values())
+        keep = [r for r in keep if (r["item_id"], r["run"]) in shared]
+    return keep
+
+
+def coverage_warning(configs: list[dict]) -> str | None:
+    """A message when configurations differ in number of work orders or runs (not comparable as is)."""
+    shapes = {(c["n_items"], c["n_runs"]) for c in configs}
+    if len(shapes) <= 1:
+        return None
+    detail = "; ".join(f"{c['model']} | {c['pattern']}: {c['n_items']} items, {c['n_runs']} runs" for c in configs)
+    return f"configurations differ in coverage ({detail}). Use --n/--runs/--common to compare like with like."
+
+
 def evaluate_all(records: list[dict], items: dict[str, Item], prices: dict[str, tuple[float, float]] | None = None,
-                 latency_budget: float = DEFAULT_LATENCY_BUDGET_S, cost_budget: float = DEFAULT_COST_BUDGET_USD) -> dict:
+                 latency_budget: float = DEFAULT_LATENCY_BUDGET_S, cost_budget: float = DEFAULT_COST_BUDGET_USD,
+                 subset_note: str | None = None) -> dict:
     prices = prices or {}
     grouped: dict[tuple[str, str], dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
     provenance: dict[str, Any] = {}
@@ -164,7 +205,8 @@ def evaluate_all(records: list[dict], items: dict[str, Item], prices: dict[str, 
                  "provenance": provenance,
                  "notes": ["Entity match = (normalised text, top-level class); relation match = (head text, tail text, type).",
                            "task_success = every gold entity found with the right class; subgoal_progress = fraction of gold entities and relations found.",
-                           "step_efficiency optimal steps: ReAct = one lookup per gold entity, Basic RAG = 1."]},
+                           "step_efficiency optimal steps: ReAct = one lookup per gold entity, Basic RAG = 1."]
+                 + ([subset_note] if subset_note else [])},
         "configs": configs,
     }
 
@@ -174,6 +216,13 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--maintie", required=True)
     ap.add_argument("--runs", default="runs", help="directory written by capture")
     ap.add_argument("--out", default="results.json")
+    ap.add_argument("--n", type=int, default=None, help="score only the first N work orders (same selection as capture --n)")
+    ap.add_argument("--seed", type=int, default=0, help="seed used at capture time (only matters with --n)")
+    ap.add_argument("--max-runs", type=int, default=None, help="score only runs 0..K-1 of each work order")
+    ap.add_argument("--models", help="comma-separated, case-insensitive substrings of model ids to include")
+    ap.add_argument("--patterns", help="comma-separated pattern names to include (react,basic_rag)")
+    ap.add_argument("--common", action="store_true",
+                    help="keep only (work order, run) pairs that every configuration has, for like-for-like comparison")
     ap.add_argument("--prices", help='JSON file {"model": [usd_per_1k_input, usd_per_1k_output]}')
     ap.add_argument("--latency-budget", type=float, default=DEFAULT_LATENCY_BUDGET_S)
     ap.add_argument("--cost-budget", type=float, default=DEFAULT_COST_BUDGET_USD)
@@ -181,7 +230,23 @@ def main(argv: list[str] | None = None) -> None:
 
     gold = {i.item_id: i for i in load_split(Path(args.maintie) / "data" / "gold_release.json", "g")}
     prices = json.loads(Path(args.prices).read_text()) if args.prices else {}
-    results = evaluate_all(load_runs(args.runs), gold, prices, args.latency_budget, args.cost_budget)
+    item_ids = {i.item_id for i in select_eval_items(list(gold.values()), n=args.n, seed=args.seed)} if args.n else None
+    split = lambda v: [x.strip() for x in v.split(",") if x.strip()] if v else None  # noqa: E731
+    records = filter_records(load_runs(args.runs), item_ids=item_ids, max_runs=args.max_runs,
+                             models=split(args.models), patterns=split(args.patterns), common=args.common)
+    if not records:
+        raise SystemExit("no runs left after filtering; check --runs, --n, --models, --patterns")
+    parts = [f"first {args.n} work orders (seed {args.seed})" if args.n else None,
+             f"runs 0..{args.max_runs - 1}" if args.max_runs else None,
+             f"models matching {args.models}" if args.models else None,
+             f"patterns {args.patterns}" if args.patterns else None,
+             "only (work order, run) pairs present for every configuration" if args.common else None]
+    note = ("Subset: " + "; ".join(p for p in parts if p) + ".") if any(parts) else None
+    results = evaluate_all(records, gold, prices, args.latency_budget, args.cost_budget, subset_note=note)
+    warn = coverage_warning(results["configs"])
+    if warn:
+        print("WARNING:", warn)
+        results["meta"]["notes"].append("WARNING: " + warn)
     Path(args.out).write_text(json.dumps(results, indent=1), encoding="utf-8")
     for c in results["configs"]:
         print(f"{c['model']:40s} {c['pattern']:10s} success={c['task_success_rate']:.2f} "

@@ -211,3 +211,75 @@ def test_end_to_end_evaluation_and_dashboard(tmp_path, items):
     html = build_html(res)
     assert "AIXPERT WP3" in html and '"m/a"' in html
     assert "</script><script" not in html.split('id="data"')[1].split("</script>")[0]
+
+
+# ---- robustness: auth abort, timeout, request guard, evaluate filters ----
+
+def _kw(tmp_path, **extra):
+    return dict(model="m/free:x", pattern="react", runs=1, out_dir=tmp_path, retries=2, backoff=0,
+                sleep=lambda s: None, log=lambda s: None, **extra)
+
+
+def test_auth_error_aborts_without_retry_and_writes_nothing(tmp_path, items):
+    from harness.maintie_demo.capture import CaptureAborted, is_fatal_error
+    calls = {"n": 0}
+
+    def unauthorized(text):
+        calls["n"] += 1
+        raise RuntimeError("UnauthorizedResponseError: User not found.")
+
+    with pytest.raises(CaptureAborted):
+        capture(items, unauthorized, **_kw(tmp_path))
+    assert calls["n"] == 1  # no retries on an error that cannot succeed
+    assert not list(tmp_path.rglob("*.json"))  # resume starts exactly here
+    assert is_fatal_error("HTTP 401 from provider") and not is_fatal_error("TooManyRequests: 4012 ms")
+
+
+def test_timeout_is_recorded_as_error_and_not_retried(tmp_path, items):
+    import time as _t
+    calls = {"n": 0}
+
+    def slow(text):
+        calls["n"] += 1
+        _t.sleep(5)
+
+    counts = capture(items[:1], slow, **_kw(tmp_path, timeout=0.2))
+    assert counts == {"done": 0, "skipped": 0, "errors": 1} and calls["n"] == 1
+    rec = json.loads(run_path(tmp_path, "m/free:x", "react", items[0].item_id, 0).read_text())
+    assert rec["error"].startswith("RunTimeout") and rec["wall_seconds"] < 2
+
+
+def test_request_guard_stops_cleanly_and_resumes(tmp_path, items):
+    good = make_fake_agent("react", items)
+    left = iter([100, 3])  # first check passes, second falls below the guard
+    counts = capture(items, good, **_kw(tmp_path, min_free_requests=10, remaining_fn=lambda: next(left), check_every=1))
+    assert counts["done"] == 1 and "only 3 free requests" in counts["stopped"]
+    assert capture(items, good, **_kw(tmp_path))["skipped"] == 1  # the finished run is kept, the rest resumes
+
+
+def test_free_requests_remaining_parses_openrouter_payload():
+    from harness.maintie_demo.capture import free_requests_remaining
+    body = {"data": {"free_model_daily_requests": {"used": 47, "limit": 50, "remaining": 3}}}
+    assert free_requests_remaining("k", fetch=lambda url, headers: body) == 3
+    assert free_requests_remaining("k", fetch=lambda url, headers: {"data": {}}) is None
+    assert free_requests_remaining("", fetch=lambda url, headers: body) is None
+
+    def boom(url, headers):
+        raise OSError("offline")
+    assert free_requests_remaining("k", fetch=boom) is None
+
+
+def test_filter_records_puts_configs_on_the_same_items_and_runs(tmp_path, items):
+    from harness.maintie_demo.evaluate import coverage_warning, filter_records
+    capture(items, make_fake_agent("react", items), model="m/a", pattern="react", runs=3, out_dir=tmp_path, log=lambda s: None)
+    capture(items[:1], make_fake_agent("react", items), model="m/b", pattern="react", runs=2, out_dir=tmp_path, log=lambda s: None)
+    recs = load_runs(tmp_path)
+    assert len(recs) == 6 + 2
+    assert {r["run"] for r in filter_records(recs, max_runs=2)} == {0, 1}
+    assert {r["model"] for r in filter_records(recs, models=["M/B"])} == {"m/b"}
+    assert {r["item_id"] for r in filter_records(recs, item_ids={items[1].item_id})} == {items[1].item_id}
+    common = filter_records(recs, common=True)
+    assert {(r["item_id"], r["run"]) for r in common} == {(items[0].item_id, 0), (items[0].item_id, 1)}
+    gold = {i.item_id: i for i in items}
+    assert coverage_warning(evaluate_all(recs, gold)["configs"]) is not None
+    assert coverage_warning(evaluate_all(common, gold)["configs"]) is None

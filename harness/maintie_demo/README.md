@@ -29,6 +29,24 @@ python -m harness.maintie_demo.dashboard
 
 Repeat capture for each model to compare (free and paid). `prices.json` maps a model to `[usd_per_1k_input, usd_per_1k_output]`; models missing from it cost 0. Add `--dry-run` to capture to exercise the whole pipeline with a fake agent and no API calls. Rate-limited or failed calls are retried, then recorded as errored runs (counted as failures); `--retry-errors` re-runs them.
 
+### Long unattended runs
+
+- **Authentication or credit errors stop capture at once** (exit code 2) and write nothing for that run, so a bad key in a batch job cannot fill the output with error files; fix the key and re-run, finished runs are kept.
+- `--timeout SECONDS` caps one attempt. A slower run is recorded as an error (`RunTimeout`) and not retried.
+- `--min-free-requests N` stops cleanly (exit code 3) when fewer than N free-model requests remain today (read from OpenRouter `/api/v1/key`, checked every 10 runs, `:free` models only). Re-run later; capture resumes.
+
+### Comparing like with like
+
+Capture can be staged (for example `--n 10 --runs 1`, later `--n 10 --runs 3`, later `--n 20`). The first N work orders for a given `--seed` are a prefix of the first M for M > N, so deeper captures only add missing files. To score every model on identical work orders and runs, filter at evaluation time:
+
+```bash
+python -m harness.maintie_demo.evaluate --maintie $M --n 10 --max-runs 3 --common
+# --models ernie,lightning   case-insensitive substrings of model ids
+# --patterns basic_rag       exact pattern names
+```
+
+`--common` keeps only the (work order, run) pairs that every configuration has. Without a filter, evaluate warns when configurations differ in work orders or runs, and the dashboard notes carry the warning or the subset used.
+
 ## The WP4 side (local file)
 
 `harness/maintie_demo/wp4_agents.py` builds the two patterns and imports WP4's private `inobo` package, so it is gitignored and never committed. Keep a local copy next to `capture.py`. It needs WP4 main plus `langchain[mcp]>=1.4.0`.
