@@ -6,9 +6,10 @@ time and rate-limit budget, so they are written once and every metric is then
 computed offline from the saved files (re-scoring never calls a model).
 Existing successful run files are skipped, so an interrupted capture resumes.
 
-The agents themselves come from ``wp4_agents.py`` (local file that imports
-WP4's private package; gitignored, see README). Use ``--dry-run`` to exercise
-the whole pipeline with a built-in fake agent and no API calls.
+The agents themselves come from ``wp4_agents.py``, which imports WP4's
+``inobo`` package (``uv sync --extra inobo``; see README). Use ``--dry-run`` to
+exercise the whole pipeline with a built-in fake agent and no API calls, and
+without ``inobo``.
 """
 
 from __future__ import annotations
@@ -238,9 +239,10 @@ def main(argv: list[str] | None = None) -> None:
         agent_fn = make_fake_agent(args.pattern, items, seed=args.seed)
     else:
         try:
-            from .wp4_agents import build_agent  # local, gitignored: imports WP4's private package
+            from .wp4_agents import build_agent  # imports WP4's inobo package
         except ImportError as e:
-            raise SystemExit(f"wp4_agents.py not found or failing to import ({e}). See harness/maintie_demo/README.md.")
+            raise SystemExit(f"wp4_agents.py could not be imported ({e}). ReAct and Basic RAG need WP4's inobo package: "
+                             "uv sync --extra inobo. --dry-run needs neither. See harness/maintie_demo/README.md.")
         agent_fn = build_agent(args.pattern, args.model, silver=silver, exclude_texts={i.text for i in items},
                                temperature=args.temperature)
 

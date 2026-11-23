@@ -53,9 +53,9 @@ What you need for what:
 | run the metrics and the tests | `uv sync --extra dev` |
 | try the demos and dashboards offline (`--dry-run`) | the above and a clone of the dataset; no API key, no `inobo` |
 | run the `baseline` pattern live on DiagFlowBench | the above and `OPENROUTER_API_KEY`; no `inobo` |
-| run ReAct or Basic RAG live in either demo | `--extra inobo` and the local builder file of the demo (below), plus `OPENROUTER_API_KEY` |
+| run ReAct or Basic RAG live in either demo | `--extra inobo` and `OPENROUTER_API_KEY` |
 
-The builder files `harness/maintie_demo/wp4_agents.py` and `harness/diagflow_demo/diagflow_agents.py` import the private `inobo` package, so they are gitignored and not part of this repository; ask the WP3 team for them. Without them `capture` stops with a message that says so, and `--dry-run` is not affected.
+The builders that wire WP4's ReAct and Basic RAG to each dataset, `harness/maintie_demo/wp4_agents.py` and `harness/diagflow_demo/diagflow_agents.py`, import `inobo`, so they work only with that extra installed. `capture` imports them only for live ReAct and Basic RAG runs; without `inobo` it stops with a message that says so, and the dry runs, the `baseline` pattern, `evaluate` and `dashboard` are not affected.
 
 Before running a live agent, configure the LLM provider in the `.env` file.
 If you don't have one:
@@ -154,7 +154,7 @@ uv run python -m harness.maintie_demo.evaluate --maintie ../maintie --runs runs_
 uv run python -m harness.maintie_demo.dashboard
 ```
 
-and open `dashboard.html`. For live runs with a real model, drop `--dry-run`, give `--model` an OpenRouter model id, and load the key with `uv run --env-file .env ...`. The `baseline` pattern of DiagFlowBench needs nothing else; ReAct and Basic RAG need `inobo` and the builder file described under [Installation](#installation). A live run costs requests, so start small (the DiagFlowBench README has the request budget of each pattern).
+and open `dashboard.html`. For live runs with a real model, drop `--dry-run`, give `--model` an OpenRouter model id, and load the key with `uv run --env-file .env ...`. The `baseline` pattern of DiagFlowBench needs nothing else; ReAct and Basic RAG need the `inobo` extra (see [Installation](#installation)). A live run costs requests, so start small (the DiagFlowBench README has the request budget of each pattern).
 
 ## The actual integration story: how this gets used with an agent
 

@@ -64,6 +64,6 @@ Re-scores the released per-model results and judge cache with this code and comp
 - **History** is the assistant's own earlier replies, as in the benchmark; errors can compound across turns.
 - **Turn ok**: right step (on-procedure) or abstention (off-procedure). pass^k is over turns, repeatability over each conversation's per-run share of ok turns. Latency and cost budgets are per turn and are demo defaults.
 
-## The WP4 side (local file)
+## The WP4 side
 
-`harness/diagflow_demo/diagflow_agents.py` builds the two patterns on one procedure graph (ReAct with step lookup tools, Basic RAG over the steps) and imports WP4's private `inobo` package, so it is gitignored and never committed. Keep a local copy next to `capture.py`.
+`harness/diagflow_demo/diagflow_agents.py` builds the two patterns on one procedure graph (ReAct with step lookup tools, Basic RAG over the steps) and imports WP4's `inobo` package (currently private; `uv sync --extra inobo`, see the top-level README for the SSH access it needs). `capture` imports it only for the `react` and `basic_rag` patterns without `--dry-run`, so the dry run, the `baseline` pattern, `evaluate` and `dashboard` work without `inobo`. Record the WP4 commit you ran with `--wp4-commit`.

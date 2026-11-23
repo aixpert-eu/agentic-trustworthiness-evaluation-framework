@@ -62,9 +62,9 @@ python -m harness.maintie_demo.evaluate --maintie $M --n 10 --max-runs 3 --commo
 
 `--common` keeps only the (work order, run) pairs that every configuration has. `--min-runs M` keeps only the work orders that have runs 0 to M-1 in every configuration, which is what you want after an extension that has only reached some work orders (otherwise the work order with the fewest runs sets k for everyone). `--k N` and `--bootstrap N` set the k of pass^k / pass@k and the number of bootstrap draws. For adding work orders and runs on the cluster in resumable rounds, with a request budget, see `harness/slurm/README.md`. Without a filter, evaluate warns when configurations differ in work orders or runs, and the dashboard notes carry the warning or the subset used.
 
-## The WP4 side (local file)
+## The WP4 side
 
-`harness/maintie_demo/wp4_agents.py` builds the two patterns and imports WP4's private `inobo` package, so it is gitignored and never committed. Keep a local copy next to `capture.py`. It needs WP4 main plus `langchain[mcp]>=1.4.0`.
+`harness/maintie_demo/wp4_agents.py` builds the two patterns and imports WP4's `inobo` package (currently private; `uv sync --extra inobo`, see the top-level README for the SSH access it needs). It needs WP4 main plus `langchain[mcp]>=1.4.0`. `capture` imports it only without `--dry-run`, so the dry run, `evaluate` and `dashboard` work without `inobo`. Record the WP4 commit you ran with `--wp4-commit`.
 
 ## What is measured
 

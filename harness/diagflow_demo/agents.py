@@ -1,7 +1,7 @@
 """The public, WP4-independent agent: the benchmark's own baseline (whole graph in the system prompt).
 
-WP4 patterns (ReAct, Basic RAG) are built in the local, gitignored ``diagflow_agents.py``, which imports
-WP4's private package. Every agent has the same shape:
+WP4 patterns (ReAct, Basic RAG) are built in ``diagflow_agents.py``, which needs WP4's ``inobo`` package.
+Every agent has the same shape:
 
     agent_fn(history) -> {"reply": str, "messages": [...], "usage": {"input": int, "output": int}}
 
