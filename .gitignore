@@ -61,4 +61,6 @@ runs_diagflow/
 results_diagflow.json
 dashboard_diagflow.html
 judge_cache_demo.json
+# Dry-run captures from the README quick start
+runs_demo*/
 .DS_Store
