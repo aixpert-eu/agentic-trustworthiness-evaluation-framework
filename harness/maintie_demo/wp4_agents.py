@@ -11,6 +11,7 @@ Requires OPENROUTER_API_KEY in the environment (never put the key in a file).
 from __future__ import annotations
 
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.prompts import ChatPromptTemplate
 
 from inobo.patterns.agent_orchestration.react_agent.pattern import ReactAgent
 from inobo.patterns.knowledge_retrieval.basic_rag.pattern import BasicRAG
@@ -60,19 +61,36 @@ def build_agent(pattern: str, model: str, *, silver, exclude_texts, temperature:
             """Retrieve similar, already annotated work orders."""
             return index.retrieve(query, k=3)
 
-        overrides = {
+        messages = {
             name: [SystemMessage(content=text) for _, text in msgs]
             for name, msgs in prompts.rag_prompt_overrides().items()
         }
-        rag = BasicRAG(
-            retriever=retrieve_examples,
-            retriever_input_schema=RetrievalInput,
-            retriever_tool_name="retrieve_examples",
-            retriever_tool_description="Retrieve similar, already annotated maintenance work orders.",
-            query_rewriter_llm_config=_llm(model, temperature),
-            answer_generator_llm_config=_llm(model, temperature),
-            prompt_overrides=overrides,
-        )
+
+        def make_rag(overrides):
+            return BasicRAG(
+                retriever=retrieve_examples,
+                retriever_input_schema=RetrievalInput,
+                retriever_tool_name="retrieve_examples",
+                retriever_tool_description="Retrieve similar, already annotated maintenance work orders.",
+                query_rewriter_llm_config=_llm(model, temperature),
+                answer_generator_llm_config=_llm(model, temperature),
+                prompt_overrides=overrides,
+            )
+
+        def usable(r):  # the pattern calls .format_messages() on the stored prompt; check it without any API call
+            try:
+                for name in messages:
+                    r.get_prompt(name).format_messages()
+                return True
+            except AttributeError:
+                return False
+
+        # WP4 versions differ in what prompt_overrides must be: a message list or a ChatPromptTemplate.
+        rag = make_rag(messages)
+        if not usable(rag):
+            rag = make_rag({name: ChatPromptTemplate.from_messages(msgs) for name, msgs in messages.items()})
+        if not usable(rag):
+            raise RuntimeError("BasicRAG rejected both prompt_overrides formats; check the installed WP4 version.")
         return lambda text: rag.run(BasicRagState(messages=[HumanMessage(content=text)], context=[]))
 
     raise ValueError(f"unknown pattern {pattern!r}")
