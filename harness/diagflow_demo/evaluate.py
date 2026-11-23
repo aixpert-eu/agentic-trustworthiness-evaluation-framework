@@ -32,6 +32,7 @@ from typing import Any
 
 from contracts.evaluator import EvaluationInput
 from harness import stats
+from harness.pricing import resolve_price
 from harness.runfiles import load_run_files
 from metrics.aggregate.cross_run_consistency import CrossRunConsistencyEvaluator
 from metrics.aggregate.pass_at_k import PassAtKAgentEvaluator
@@ -145,8 +146,9 @@ def _with_ci(res: dict | None, ci: tuple[float, float] | None) -> dict | None:
     return res
 
 
-def aggregate_config(model: str, pattern: str, scored: list[dict], price: tuple[float, float],
-                     latency_budget: float, cost_budget: float, k: int | None = None, n_boot: int = stats.N_BOOT) -> dict:
+def aggregate_config(model: str, pattern: str, scored: list[dict], price: tuple[float, float] | None,
+                     latency_budget: float, cost_budget: float, k: int | None = None, n_boot: int = stats.N_BOOT,
+                     price_basis: str = "table") -> dict:
     metrics = aggregate_metrics([s for s in scored], accept_terminal_node=True)
     cases: dict[tuple[str, int], list[bool]] = defaultdict(list)  # (conversation, turn) -> ok per run
     by_conv: dict[str, list[list[bool]]] = defaultdict(list)
@@ -193,7 +195,8 @@ def aggregate_config(model: str, pattern: str, scored: list[dict], price: tuple[
     consistency_in = [[sum(f) / len(f) for f in fl] for fl in by_conv.values()]
     secs = [t["seconds"] for t in turns if t.get("seconds") is not None]
     mean_s = _mean(secs)
-    cost = _mean([t["tokens_in"] / 1000 * price[0] + t["tokens_out"] / 1000 * price[1] for t in turns])
+    # No price means the cost is unknown, not zero: it is left unmeasured instead of being banded as free.
+    cost = None if price is None else _mean([t["tokens_in"] / 1000 * price[0] + t["tokens_out"] / 1000 * price[1] for t in turns])
     return {
         "model": model, "pattern": pattern, "reference": False, "n_conversations": len(by_conv), "n_runs": len(scored),
         "n_errors": sum(1 for s in scored if s["error"]), "n_turns": len(turns),
@@ -205,7 +208,7 @@ def aggregate_config(model: str, pattern: str, scored: list[dict], price: tuple[
         "cross_run_consistency": _safe(lambda: CrossRunConsistencyEvaluator().evaluate_runs(consistency_in)) if n_runs_min >= 2 else None,
         "latency": _safe(lambda: LatencyEvaluator().evaluate_measurement(mean_s, latency_budget)) if mean_s is not None else None,
         "latency_mean_s": mean_s, "cost": _safe(lambda: CostPerQueryEvaluator().evaluate_measurement(cost, cost_budget)) if cost is not None else None,
-        "cost_mean_usd": cost, "tokens_in_mean": _mean([t["tokens_in"] for t in turns]), "tokens_out_mean": _mean([t["tokens_out"] for t in turns]),
+        "cost_mean_usd": cost, "price_basis": price_basis, "tokens_in_mean": _mean([t["tokens_in"] for t in turns]), "tokens_out_mean": _mean([t["tokens_out"] for t in turns]),
         "tool_calls_mean": _mean([t["n_tool_calls"] for t in turns]),
         "items": [{"conversation_id": cid, "regime": next(s["regime"] for s in scored if s["base_id"] == cid),
                    "runs": [{"run": s["run"], "error": s["error"], "n_reached": s["n_reached"], "n_gold_turns": s["n_gold_turns"],
@@ -257,7 +260,9 @@ def evaluate_all(records: list[dict], graphs: dict, convs: dict, judge: Judge | 
         grouped[(rec["model"], rec["pattern"])].append(evaluate_run(rec, graphs[rec["graph_id"]], convs[rec["conversation_id"]], judge))
         provenance[rec["model"]] = rec.get("provenance", {})
     k_used = common_k(grouped, k)
-    configs = [aggregate_config(m, p, scored, tuple(prices.get(m, (0.0, 0.0))), latency_budget, cost_budget, k=k_used, n_boot=n_boot)
+    priced = {m: resolve_price(m, prices) for m, _ in grouped}
+    configs = [aggregate_config(m, p, scored, priced[m][0], latency_budget, cost_budget, k=k_used, n_boot=n_boot,
+                                price_basis=priced[m][1])
                for (m, p), scored in sorted(grouped.items())]
     unjudged = sum(c["n_unjudged"] for c in configs)
     notes = ["Step accuracy: the reply names the NEXT scripted step (Jaccard node matching, threshold 0.05, as DiagFlowBench). "

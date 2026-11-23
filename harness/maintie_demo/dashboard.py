@@ -25,7 +25,7 @@ __TRUST_SECTION__
 <div class="panel" id="quality"></div>
 
 <div class="part">Part 3 &middot; Details</div>
-<h2>Resource use</h2><p class="sub">Per query, averaged over all runs. Cost uses the price table given at evaluation time (free models cost 0). The banded latency and cost also appear under the Efficiency dimension in Part 1.</p>
+<h2>Resource use</h2><p class="sub">Per query, averaged over all runs. Cost uses the price table given at evaluation time: a model id ending in :free costs 0 (shown as free), and any other model without a price is shown as not priced and its cost is not scored. The banded latency and cost also appear under the Efficiency dimension in Part 1.</p>
 <div class="panel"><table id="eff"></table></div>
 
 <h2>Work-order drill-down</h2>
@@ -58,6 +58,7 @@ $('quality').innerHTML = '<div class="legend"><span class="dot" style="backgroun
 
 __TRUST_JS__
 const bandOnly = r => r && !r.error ? r : null;
+const costText = c => c.cost_mean_usd == null ? 'not priced' : c.price_basis === 'free' ? 'free' : '$' + c.cost_mean_usd.toFixed(4);
 trustInit({rows: C, rowHtml: c => `<span class="dot" style="background:${color(c)}"></span>${esc(key(c))}`, metrics: [
   {id: 'pass_hat_k_agent', dim: 'Accuracy', label: 'Outcome reliability (pass^k)', val: c => c.pass_hat_k, res: c => c.pass_hat_k, html: c => chip(c.pass_hat_k)},
   {id: 'pass_at_k_agent', dim: 'Accuracy', label: 'Capability within k tries (pass@k)', val: c => c.pass_at_k, res: c => c.pass_at_k, html: c => chip(c.pass_at_k),
@@ -71,7 +72,7 @@ trustInit({rows: C, rowHtml: c => `<span class="dot" style="background:${color(c
   {id: 'latency', dim: 'Efficiency', label: 'Latency per query', val: c => c.latency_mean_s, res: c => bandOnly(c.latency),
     html: c => c.latency_mean_s == null ? 'n/a' : c.latency_mean_s.toFixed(1) + ' s ' + (bandOnly(c.latency) ? chip(c.latency) : '')},
   {id: 'cost_per_query', dim: 'Efficiency', label: 'Cost per query', val: c => c.cost_mean_usd, res: c => bandOnly(c.cost),
-    html: c => c.cost_mean_usd == null ? 'n/a' : '$' + c.cost_mean_usd.toFixed(4) + ' ' + (bandOnly(c.cost) ? chip(c.cost) : '')},
+    html: c => costText(c) + ' ' + (bandOnly(c.cost) ? chip(c.cost) : '')},
   {id: 'discriminative_power', dim: 'Auditability / Verifiability', run: true, label: 'Discriminative power (does the score separate the configurations)',
     val: () => ((R.meta.meta_evaluation || {}).discriminative_power), res: () => null, missing: 'needs two or more configurations (and the evaluate stage of this version)',
     html: () => { const r = R.meta.meta_evaluation.discriminative_power; return r.error ? '<span class="chip b0">error</span>' :
@@ -79,7 +80,7 @@ trustInit({rows: C, rowHtml: c => `<span class="dot" style="background:${color(c
 ]});
 
 $('eff').innerHTML = '<tr><th>Configuration</th><th>Latency (mean)</th><th>Cost per query</th><th>Tokens in / out</th><th>Tool calls</th><th>Errored runs</th></tr>' +
-  C.map(c => `<tr><td><span class="dot" style="background:${color(c)}"></span>${esc(key(c))}</td><td>${c.latency_mean_s == null ? 'n/a' : c.latency_mean_s.toFixed(1) + ' s'} ${c.latency && !c.latency.error ? chip(c.latency) : ''}</td><td>$${(c.cost_mean_usd ?? 0).toFixed(4)} ${c.cost && !c.cost.error ? chip(c.cost) : ''}</td><td class="n">${Math.round(c.tokens_in_mean ?? 0)} / ${Math.round(c.tokens_out_mean ?? 0)}</td><td class="n">${f2(c.tool_calls_mean)}</td><td class="n">${c.n_errors} of ${c.n_runs}</td></tr>`).join('');
+  C.map(c => `<tr><td><span class="dot" style="background:${color(c)}"></span>${esc(key(c))}</td><td>${c.latency_mean_s == null ? 'n/a' : c.latency_mean_s.toFixed(1) + ' s'} ${c.latency && !c.latency.error ? chip(c.latency) : ''}</td><td>${costText(c)} ${c.cost && !c.cost.error ? chip(c.cost) : ''}</td><td class="n">${Math.round(c.tokens_in_mean ?? 0)} / ${Math.round(c.tokens_out_mean ?? 0)}</td><td class="n">${f2(c.tool_calls_mean)}</td><td class="n">${c.n_errors} of ${c.n_runs}</td></tr>`).join('');
 
 C.forEach((c, i) => $('cfg').insertAdjacentHTML('beforeend', `<option value="${i}">${esc(key(c))}</option>`));
 const pill = e => `<span class="mono">${esc(e.text)} [${esc(e.type)}]</span>`;

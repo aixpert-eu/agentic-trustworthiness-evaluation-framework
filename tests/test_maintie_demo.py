@@ -284,3 +284,17 @@ def test_filter_records_puts_configs_on_the_same_items_and_runs(tmp_path, items)
     gold = {i.item_id: i for i in items}
     assert coverage_warning(evaluate_all(recs, gold)["configs"]) is not None
     assert coverage_warning(evaluate_all(common, gold)["configs"]) is None
+
+
+def test_cost_is_priced_free_or_not_measured(tmp_path, items):
+    for model in ("m/table", "m/paid", "m/other:free"):
+        capture(items, make_fake_agent("react", items, drop=0.0, wrong_class=0.0), model=model, pattern="react", runs=2,
+                out_dir=tmp_path, log=lambda s: None)
+    res = evaluate_all(load_runs(tmp_path), {i.item_id: i for i in items}, prices={"m/table": (0.001, 0.002)})
+    cfg = {c["model"]: c for c in res["configs"]}
+    table, paid, free = cfg["m/table"], cfg["m/paid"], cfg["m/other:free"]
+    assert table["price_basis"] == "table" and table["cost_mean_usd"] > 0 and table["cost"] is not None
+    assert free["price_basis"] == "free" and free["cost_mean_usd"] == 0.0 and free["cost"]["band_level"] == 4
+    # a paid model with no price entry must not pass as free: its cost is not measured, not banded
+    assert paid["price_basis"] == "none" and paid["cost_mean_usd"] is None and paid["cost"] is None
+    assert "not priced" in build_html(res)

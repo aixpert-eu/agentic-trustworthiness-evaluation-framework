@@ -327,3 +327,17 @@ def test_judge_retries_rate_limits(tmp_path, monkeypatch):
     h = J.HaikuJudge(tmp_path / "c.json", api_key="k")
     assert h._call("p", 5) == "YES" and calls["n"] == 3
     assert sleeps == [7.0, 4.0]  # Retry-After first, then exponential backoff
+
+
+def test_cost_is_priced_free_or_not_measured(world, tmp_path):
+    ids = list(world["convs"])
+    for model in ("m/table", "m/paid", "m/other:free"):
+        capture(ids, world["convs"], world["graphs"], make_fake_factory("react", p_correct=1.0, p_force=0.0),
+                **{**_kw(tmp_path), "pattern": "react", "model": model})
+    res = evaluate_all(load_runs(tmp_path), world["graphs"], world["convs"], RuleJudge(), prices={"m/table": (0.001, 0.002)})
+    cfg = {c["model"]: c for c in res["configs"]}
+    table, paid, free = cfg["m/table"], cfg["m/paid"], cfg["m/other:free"]
+    assert table["price_basis"] == "table" and table["cost_mean_usd"] > 0 and table["cost"] is not None
+    assert free["price_basis"] == "free" and free["cost_mean_usd"] == 0.0 and free["cost"]["band_level"] == 4
+    assert paid["price_basis"] == "none" and paid["cost_mean_usd"] is None and paid["cost"] is None
+    assert "not priced" in build_html(res)
