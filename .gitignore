@@ -49,16 +49,15 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 
-# MaintIE demo: local builder for the real WP4 agents (imports WP4's private package)
-harness/maintie_demo/wp4_agents.py
 # MaintIE demo outputs
 runs/
 results.json
 dashboard.html
-# DiagFlowBench demo: local builder for the real WP4 agents, and outputs
-harness/diagflow_demo/diagflow_agents.py
+# DiagFlowBench demo outputs
 runs_diagflow/
 results_diagflow.json
 dashboard_diagflow.html
 judge_cache_demo.json
+# Dry-run captures from the README quick start
+runs_demo*/
 .DS_Store

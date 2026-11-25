@@ -154,9 +154,10 @@ def main(argv: list[str] | None = None) -> None:
         factory = lambda graph, conv: make_baseline_agent(args.model, graph, args.temperature)  # noqa: E731
     else:
         try:
-            from .diagflow_agents import build_agent  # local, gitignored: imports WP4's private package
+            from .diagflow_agents import build_agent  # imports WP4's inobo package
         except ImportError as e:
-            raise SystemExit(f"diagflow_agents.py not found or failing to import ({e}). See harness/diagflow_demo/README.md.")
+            raise SystemExit(f"diagflow_agents.py could not be imported ({e}). ReAct and Basic RAG need WP4's inobo package: "
+                             "uv sync --extra inobo. --dry-run and --pattern baseline need neither. See harness/diagflow_demo/README.md.")
         factory = lambda graph, conv: build_agent(args.pattern, args.model, graph, temperature=args.temperature)  # noqa: E731
 
     guard = args.min_free_requests if args.model.endswith(":free") and not args.dry_run else None

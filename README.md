@@ -5,9 +5,23 @@ dimension definitions, metric/method specifications and
 implementations, KPI templates, and the harness that connects them to a
 real agent run. It does **not** hold agent implementations.
 
+## Quick start
+
+Requires [`uv`](https://docs.astral.sh/uv/) and Python 3.13+ (uv reads the pin in `.python-version` and creates `.venv`, so there is no separate environment step).
+
+```bash
+git clone https://github.com/aixpert-eu/agentic-trustworthiness-evaluation-framework.git
+cd agentic-trustworthiness-evaluation-framework
+uv sync --extra dev            # the slow step: the first sync downloads PyTorch
+uv run --extra dev pytest -q   # every test should pass; no API key needed
+cp .env.example .env           # then set OPENROUTER_API_KEY; only live runs need it
+```
+
+Then try the dashboards offline, with no API key and no `inobo`, in [Dashboards, demos and the metric catalogue](#dashboards-demos-and-the-metric-catalogue).
+
 ## Installation
 
-Requires `uv` and Python 3.13+. From the repository root:
+From the repository root:
 
 ```bash
 uv sync --extra dev
@@ -25,6 +39,23 @@ For instance, to include bias evaluation and the aixpert-inobo framework, use
 Currently, `inobo` is private and it's installed from GitHub via SSH;
 you need access to `aixpert-eu/aixpert-inobo` to install. The core framework
 does not require `inobo`, as it should work with other agents too.
+
+`uv` runs `git` over SSH for `inobo`, so you need an SSH key registered with GitHub that has access to the repository. HTTPS credentials alone do not work for this extra. To check key and access before you sync:
+
+```bash
+git ls-remote git@github.com:aixpert-eu/aixpert-inobo.git HEAD   # prints a commit hash when it works
+```
+
+What you need for what:
+
+| I want to | I need |
+|---|---|
+| run the metrics and the tests | `uv sync --extra dev` |
+| try the demos and dashboards offline (`--dry-run`) | the above and a clone of the dataset; no API key, no `inobo` |
+| run the `baseline` pattern live on DiagFlowBench | the above and `OPENROUTER_API_KEY`; no `inobo` |
+| run ReAct or Basic RAG live in either demo | `--extra inobo` and `OPENROUTER_API_KEY` |
+
+The builders that wire WP4's ReAct and Basic RAG to each dataset, `harness/maintie_demo/wp4_agents.py` and `harness/diagflow_demo/diagflow_agents.py`, import `inobo`, so they work only with that extra installed. `capture` imports them only for live ReAct and Basic RAG runs; without `inobo` it stops with a message that says so, and the dry runs, the `baseline` pattern, `evaluate` and `dashboard` are not affected.
 
 Before running a live agent, configure the LLM provider in the `.env` file.
 If you don't have one:
@@ -67,18 +98,63 @@ JSON round-trip required (though that path also works, and is useful on
 its own -- see `harness/`)
 
 ## Structure
-dimensions/ Level 1 -- the 10-dimension taxonomy, as data (not code)
-metrics/ Level 2 -- 53 metrics across 9 applicability categories
-contracts/ The interface boundary: shared data contracts,
-banding logic, and the metric registry (see below)
-harness/ The integration layer: adapts an agentic pattern's raw
-output into this framework's contract, and runs every
-applicable metric against it automatically
+
+```
+dimensions/    Level 1 -- the 10-dimension taxonomy, as data (not code)
+metrics/       Level 2 -- 53 metrics across 9 applicability categories
+contracts/     The interface boundary: shared data contracts,
+               banding logic, and the metric registry (see below)
+harness/       The integration layer: adapts an agentic pattern's raw
+               output into this framework's contract, and runs every
+               applicable metric against it automatically
+  maintie_demo/, diagflow_demo/   capture, evaluate and dashboard for the two demos
+  slurm/                          resumable job scripts for extra runs on a cluster
 kpi_templates/ Level 3 -- KPI spec template for WP7, UC-agnostic
-fixtures/ Mock and real agent trajectories
-tests/ Metric and harness unit tests -- 201 passing
-docs/ Reference material, incl. the pattern <-> metric
-applicability matrix and the full periodic-table cross-reference
+fixtures/      Mock and real agent trajectories
+tests/         Unit tests for the metrics, the harness, the dashboards and the demos
+docs/          Reference material, incl. the pattern <-> metric
+               applicability matrix and the full periodic-table cross-reference;
+               catalogue/ holds the interactive metric catalogue and picker
+```
+
+## Dashboards, demos and the metric catalogue
+
+The harness also runs complete evaluations of two datasets and writes one self-contained HTML dashboard per run: trustworthiness by dimension, task-specific results and details, with 95% intervals. A dimension with no measured metric shows as a gap, never as a pass.
+
+| Where | What |
+|---|---|
+| `harness/diagflow_demo/` | [DiagFlowBench](https://github.com/aixpert-rug/DiagFlowBench), diagnostic dialogue (UC3 style): `baseline`, `basic_rag` and `react` patterns. See its README. |
+| `harness/maintie_demo/` | [MaintIE](https://github.com/nlp-tlp/maintie), entity and relation extraction from work orders: `basic_rag` and `react` patterns. See its README. |
+| `harness/slurm/` | Resumable SLURM job scripts that add runs to the captures in rounds, with a daily request guard. |
+| `docs/catalogue/` | Interactive metric catalogue and picker. Open `aixpert_catalogue_picker.html` in a browser, choose the metrics for a use case and download the selection; both dashboards can open with it applied (`--metrics`). |
+
+### Try it offline (no API key, no `inobo`)
+
+`--dry-run` uses a fake agent, so the numbers check the pipeline and are not results. Both demos work the same way: capture (one JSON file per run), evaluate (offline, no model calls), dashboard.
+
+```bash
+git clone https://github.com/aixpert-rug/DiagFlowBench.git ../DiagFlowBench
+for P in baseline basic_rag react; do
+  uv run python -m harness.diagflow_demo.capture --diagflow ../DiagFlowBench --pattern $P \
+    --model demo --pairs 5 --runs 3 --dry-run --out runs_demo
+done
+uv run python -m harness.diagflow_demo.evaluate --diagflow ../DiagFlowBench --runs runs_demo --judge rule
+uv run python -m harness.diagflow_demo.dashboard
+```
+
+Open `dashboard_diagflow.html` in a browser. For MaintIE:
+
+```bash
+git clone --depth 1 https://github.com/nlp-tlp/maintie.git ../maintie
+for P in basic_rag react; do
+  uv run python -m harness.maintie_demo.capture --maintie ../maintie --pattern $P \
+    --model demo --n 5 --runs 3 --dry-run --out runs_demo_maintie
+done
+uv run python -m harness.maintie_demo.evaluate --maintie ../maintie --runs runs_demo_maintie
+uv run python -m harness.maintie_demo.dashboard
+```
+
+and open `dashboard.html`. For live runs with a real model, drop `--dry-run`, give `--model` an OpenRouter model id, and load the key with `uv run --env-file .env ...`. The `baseline` pattern of DiagFlowBench needs nothing else; ReAct and Basic RAG need the `inobo` extra (see [Installation](#installation)). A live run costs requests, so start small (the DiagFlowBench README has the request budget of each pattern).
 
 ## The actual integration story: how this gets used with an agent
 

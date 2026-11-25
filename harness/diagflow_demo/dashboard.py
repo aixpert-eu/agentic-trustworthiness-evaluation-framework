@@ -30,7 +30,7 @@ __TRUST_SECTION__
 <div class="panel" id="on"></div>
 
 <div class="part">Part 3 &middot; Details</div>
-<h2>Resource use</h2><p class="sub">Per conversation turn, averaged over all runs. Cost uses the price table given at evaluation time (free models cost 0). The banded latency and cost also appear under the Efficiency dimension in Part 1.</p>
+<h2>Resource use</h2><p class="sub">Per conversation turn, averaged over all runs. Cost uses the price table given at evaluation time: a model id ending in :free costs 0 (shown as free), and any other model without a price is shown as not priced and its cost is not scored. The banded latency and cost also appear under the Efficiency dimension in Part 1.</p>
 <div class="panel"><table id="eff"></table></div>
 
 <h2>Conversation drill-down</h2>
@@ -75,6 +75,7 @@ $('on').innerHTML = (anyCi ? '<div class="legend">Whisker on a bar: 95% interval
 
 __TRUST_JS__
 const NEEDS_RUNS = '<span class="mute">needs 2+ runs</span>', bandOnly = r => r && !r.error ? r : null;
+const costText = c => c.cost_mean_usd == null ? 'not priced' : c.price_basis === 'free' ? 'free' : '$' + c.cost_mean_usd.toFixed(4);
 trustInit({rows: live, rowHtml: c => `<span class="dot" style="background:${color(c)}"></span>${esc(key(c))}`, metrics: [
   {id: 'pass_hat_k_agent', dim: 'Accuracy', label: 'Turn-level reliability (pass^k)', val: c => c.pass_hat_k, res: c => c.pass_hat_k, html: c => chip(c.pass_hat_k)},
   {id: 'pass_at_k_agent', dim: 'Accuracy', label: 'Capability within k tries (pass@k)', val: c => c.pass_at_k, res: c => c.pass_at_k, html: c => chip(c.pass_at_k),
@@ -92,7 +93,7 @@ trustInit({rows: live, rowHtml: c => `<span class="dot" style="background:${colo
   {id: 'latency', dim: 'Efficiency', label: 'Latency per turn', val: c => c.latency_mean_s, res: c => bandOnly(c.latency),
     html: c => c.latency_mean_s == null ? 'n/a' : c.latency_mean_s.toFixed(1) + ' s ' + (bandOnly(c.latency) ? chip({...c.latency, rate: null}) : '')},
   {id: 'cost_per_query', dim: 'Efficiency', label: 'Cost per turn', val: c => c.cost_mean_usd, res: c => bandOnly(c.cost),
-    html: c => c.cost_mean_usd == null ? 'n/a' : '$' + c.cost_mean_usd.toFixed(4) + ' ' + (bandOnly(c.cost) ? chip({...c.cost, rate: null}) : '')},
+    html: c => costText(c) + ' ' + (bandOnly(c.cost) ? chip({...c.cost, rate: null}) : '')},
   {id: 'discriminative_power', dim: 'Auditability / Verifiability', run: true, label: 'Discriminative power (does the score separate the configurations)',
     val: () => ((R.meta.meta_evaluation || {}).discriminative_power), res: () => null, missing: 'needs two or more configurations (and the evaluate stage of this version)',
     html: () => { const r = R.meta.meta_evaluation.discriminative_power; return r.error ? '<span class="chip b0">error</span>' :
@@ -100,7 +101,7 @@ trustInit({rows: live, rowHtml: c => `<span class="dot" style="background:${colo
 ]});
 
 $('eff').innerHTML = '<tr><th>Configuration</th><th>Latency per turn</th><th>Cost per turn</th><th>Tokens in / out per turn</th><th>Tool calls per turn</th><th>Errored runs</th></tr>' +
-  live.map(c => `<tr><td><span class="dot" style="background:${color(c)}"></span>${esc(key(c))}</td><td>${c.latency_mean_s == null ? 'n/a' : c.latency_mean_s.toFixed(1) + ' s'} ${c.latency && !c.latency.error ? chip({...c.latency, rate: null}) : ''}</td><td>$${(c.cost_mean_usd ?? 0).toFixed(4)}</td><td class="n">${Math.round(c.tokens_in_mean ?? 0)} / ${Math.round(c.tokens_out_mean ?? 0)}</td><td class="n">${f2(c.tool_calls_mean)}</td><td class="n">${c.n_errors} of ${c.n_runs}</td></tr>`).join('');
+  live.map(c => `<tr><td><span class="dot" style="background:${color(c)}"></span>${esc(key(c))}</td><td>${c.latency_mean_s == null ? 'n/a' : c.latency_mean_s.toFixed(1) + ' s'} ${c.latency && !c.latency.error ? chip({...c.latency, rate: null}) : ''}</td><td>${costText(c)} ${c.cost && !c.cost.error ? chip({...c.cost, rate: null}) : ''}</td><td class="n">${Math.round(c.tokens_in_mean ?? 0)} / ${Math.round(c.tokens_out_mean ?? 0)}</td><td class="n">${f2(c.tool_calls_mean)}</td><td class="n">${c.n_errors} of ${c.n_runs}</td></tr>`).join('');
 
 live.forEach((c, i) => $('cfg').insertAdjacentHTML('beforeend', `<option value="${i}">${esc(key(c))}</option>`));
 const outChip = t => t.outcome ? `<span class="chip ${t.outcome === 'correct_abstention' ? 'b4' : 'b0'}">${esc(t.outcome.replace('_', ' '))}</span>` : '';

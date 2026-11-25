@@ -29,6 +29,7 @@ from contracts.evaluator import EvaluationResult
 from harness.adapters import from_wp4_pattern_result
 from harness.evaluate_trajectory import evaluate_trajectory
 from harness import stats
+from harness.pricing import resolve_price
 from harness.runfiles import load_run_files
 from metrics.aggregate.cross_run_consistency import CrossRunConsistencyEvaluator
 from metrics.aggregate.pass_at_k import PassAtKAgentEvaluator
@@ -130,8 +131,8 @@ def _micro_f1_ci(per_item: dict[str, list[dict]], kind: str, n_boot: int) -> lis
 
 
 def aggregate_config(model: str, pattern: str, per_item: dict[str, list[dict]], items: dict[str, Item],
-                     price: tuple[float, float], latency_budget: float, cost_budget: float,
-                     k: int | None = None, n_boot: int = stats.N_BOOT) -> dict:
+                     price: tuple[float, float] | None, latency_budget: float, cost_budget: float,
+                     k: int | None = None, n_boot: int = stats.N_BOOT, price_basis: str = "table") -> dict:
     runs = [r for rs in per_item.values() for r in rs]
     micro = {}
     for kind in ("entity", "relation"):
@@ -147,7 +148,8 @@ def aggregate_config(model: str, pattern: str, per_item: dict[str, list[dict]], 
         _with_ci(res, stats.cluster_bootstrap(problems, lambda sample, ev=ev: ev().evaluate_problems(sample, k).score, n_boot=n_boot)
                  if res is not None and "error" not in res else None)
     mean_s = _mean([r["seconds"] for r in runs])
-    cost = _mean([r["tokens_in"] / 1000 * price[0] + r["tokens_out"] / 1000 * price[1] for r in runs])
+    # No price means the cost is unknown, not zero: it is left unmeasured instead of being banded as free.
+    cost = None if price is None else _mean([r["tokens_in"] / 1000 * price[0] + r["tokens_out"] / 1000 * price[1] for r in runs])
     return {
         "model": model, "pattern": pattern, "n_items": len(per_item), "n_runs": len(runs),
         "n_errors": sum(1 for r in runs if r["error"]),
@@ -165,8 +167,8 @@ def aggregate_config(model: str, pattern: str, per_item: dict[str, list[dict]], 
             [r["predicted"] if r["structured"] else None for r in runs])),
         "latency": _safe(lambda: LatencyEvaluator().evaluate_measurement(mean_s, latency_budget)) if mean_s is not None else None,
         "latency_mean_s": mean_s,
-        "cost": _safe(lambda: CostPerQueryEvaluator().evaluate_measurement(cost, cost_budget)),
-        "cost_mean_usd": cost,
+        "cost": _safe(lambda: CostPerQueryEvaluator().evaluate_measurement(cost, cost_budget)) if cost is not None else None,
+        "cost_mean_usd": cost, "price_basis": price_basis,
         "tokens_in_mean": _mean([r["tokens_in"] for r in runs]), "tokens_out_mean": _mean([r["tokens_out"] for r in runs]),
         "tool_calls_mean": _mean([r.get("n_tool_calls") for r in runs]),
         "items": [
@@ -268,8 +270,9 @@ def evaluate_all(records: list[dict], items: dict[str, Item], prices: dict[str, 
     for (model, pattern), per_item in sorted(grouped.items()):
         for rs in per_item.values():
             rs.sort(key=lambda r: r["run"])
-        configs.append(aggregate_config(model, pattern, per_item, items, tuple(prices.get(model, (0.0, 0.0))),
-                                        latency_budget, cost_budget, k=k_used, n_boot=n_boot))
+        price, basis = resolve_price(model, prices)
+        configs.append(aggregate_config(model, pattern, per_item, items, price, latency_budget, cost_budget,
+                                        k=k_used, n_boot=n_boot, price_basis=basis))
     return {
         "meta": {"generated_at": datetime.now(timezone.utc).isoformat(), "dataset": "MaintIE (nlp-tlp/maintie, MIT), gold split",
                  "latency_budget_s": latency_budget, "cost_budget_usd": cost_budget, "prices_usd_per_1k": prices,
